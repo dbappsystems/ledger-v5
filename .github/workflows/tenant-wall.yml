@@ -1,0 +1,16 @@
+name: tenant-wall
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  static-isolation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Static tenant-wall test
+        run: node tests/test_tenant_isolation_static.mjs worker/index.js
