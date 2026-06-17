@@ -24,7 +24,7 @@ import { api as apiClient } from './api.js'
 import {
   normalizeOwnerCut, asArray, parseAppDate, loadDate,
   getLoadTotals, calcPay, advanceKept, reimbursementOwed,
-  computeRunningBalance,
+  computeRunningBalance, carrierAdvanceOwed,
 } from './settlementMath'
 
 // -- FORMATTERS --------------------------------------------------------
@@ -474,10 +474,11 @@ function StatementOverlay({ data, driverName, onClose }) {
               <tbody>
                 <tr><td style={TD}>Gross Pay — All Loads (driver split of rate con)</td><td style={TDr}>{fmt(d.allGross90)}</td></tr>
                 {d.allDetention > 0 && <tr style={{background:'#f1f8e9'}}><td style={{...TD,color:'#2e7d32'}}>+ Detention (all time)</td><td style={{...TDr,color:'#2e7d32'}}>{fmt(d.allDetention)}</td></tr>}
-                {d.allAdvKept > 0 && <tr style={{background:'#fafafa'}}><td style={TD}>- Advance Kept (all time)</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.allAdvKept)})</td></tr>}
+                {d.allAdvKept > 0 && <tr style={{background:'#fafafa'}}><td style={TD}>- Broker Advance (Comdata) (all time)</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.allAdvKept)})</td></tr>}
                 {d.allReimb > 0 && <tr style={{background:'#fffde7'}}><td style={{...TD,color:'#f57c00'}}>+ Lumper Reimbursements (all time)</td><td style={{...TDr,color:'#f57c00'}}>{fmt(d.allReimb)}</td></tr>}
                 {d.allFleetFuel > 0 && <tr style={{background:'#fafafa'}}><td style={TD}>- Fleet Card Fuel (all time)</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.allFleetFuel)})</td></tr>}
                 {d.allAchDisbursed > 0 && <tr style={{background:'#e8f5e9'}}><td style={{...TD,color:'#2e7d32'}}>- ACH Payments Made (all time)</td><td style={{...TDr,color:'#2e7d32'}}>({fmt(d.allAchDisbursed)})</td></tr>}
+                {d.allCarrierAdvance > 0 && <tr style={{background:'#fff3e0'}}><td style={{...TD,color:'#e65100'}}>- Carrier Advance (unrepaid, all time)</td><td style={{...TDr,color:'#e65100'}}>({fmt(d.allCarrierAdvance)})</td></tr>}
                 {d.allEscrow > 0 && <tr style={{background:'#f3e5f5'}}><td style={{...TD,color:'#7b1fa2'}}>- ETTR Financed Repair Payments</td><td style={{...TDr,color:'#7b1fa2'}}>({fmt(d.allEscrow)})</td></tr>}
                 <tr style={{background:'#1a2a3a'}}>
                   <td style={{ padding:'14px 12px', fontSize:15, fontWeight:900, color:'#fff', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }}>BALANCE CURRENTLY OWED TO {driverName}</td>
@@ -488,6 +489,41 @@ function StatementOverlay({ data, driverName, onClose }) {
             </table>
           </div>
         </div>
+        {/* CARRIER ADVANCES — all-time detail */}
+        {d.carrierAdvRows.length > 0 && (
+          <div style={{ marginBottom:24 }}>
+            <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>CARRIER ADVANCES — ALL TIME</div>
+            <div style={{ background:'#fff8e1', border:'1px solid #ffe082', borderRadius:8, padding:'10px 14px', marginBottom:8, fontSize:11, color:'#7a5c00' }}>
+              Direct carrier-to-driver loans (breakdown, repair, fuel, general). Unrepaid advances reduce the balance owed above. Repaid advances are shown for the record but no longer reduce the balance.
+            </div>
+            <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                <thead><tr>
+                  <th style={TH}>Date</th>
+                  <th style={TH}>Reason</th>
+                  <th style={TH}>Notes</th>
+                  <th style={{...TH,textAlign:'right'}}>Amount</th>
+                  <th style={{...TH,textAlign:'right'}}>Status</th>
+                </tr></thead>
+                <tbody>
+                  {d.carrierAdvRows.map((a,i) => (
+                    <tr key={i} style={{ background:i%2===0?'#fff':'#fafafa' }}>
+                      <td style={TD}>{a.advance_date||'-'}</td>
+                      <td style={TD}><span style={{ fontSize:10, fontWeight:700, padding:'2px 6px', borderRadius:4, background:'#fff3e0', color:'#e65100', textTransform:'uppercase' }}>{a.reason||'general'}</span></td>
+                      <td style={{...TD,color:'#666',fontSize:11}}>{a.notes||'-'}</td>
+                      <td style={{...TDr,color:a.repaid?'#aaa':'#e65100'}}>{fmt(a.amount)}</td>
+                      <td style={{...TDr,color:a.repaid?'#2e7d32':'#c62828',fontSize:11}}>{a.repaid?'REPAID':'OPEN'}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td style={TF} colSpan={3}>UNREPAID TOTAL (reduces balance)</td>
+                    <td style={{...TFr,color:'#e65100'}} colSpan={2}>{fmt(d.allCarrierAdvance)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
         {/* SOURCE OF FUNDS — FIFO */}
         {(d.fifoRows.length > 0 || Object.keys(d.fifoUnpaid).length > 0) && (
           <div style={{ marginBottom:24 }}>
@@ -574,6 +610,8 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
   const [fuelEntries,     setFuelEntries]     = useState([])
   // Raw escrow records — filtered all-time for running balance, by period for display row
   const [escrowPayments,  setEscrowPayments]  = useState([])
+  // Carrier advances — carrier->driver direct loans; unrepaid reduce the balance.
+  const [carrierAdvances, setCarrierAdvances] = useState([])
   const [period,          setPeriod]          = useState('monthly')
   const [periodOffset,    setPeriodOffset]    = useState(0)
   const [showStatement,   setShowStatement]   = useState(null)
@@ -600,25 +638,45 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
   const [editFuelNotes,   setEditFuelNotes]   = useState('')
   const [editFuelSaving,  setEditFuelSaving]  = useState(false)
 
+  // Carrier advance entry form state
+  const [showAdvDrawer,   setShowAdvDrawer]   = useState(false)
+  const [advDriver,       setAdvDriver]       = useState(isBookkeeper ? 'TIM' : driverName || 'TIM')
+  const [advDate,         setAdvDate]         = useState(new Date().toISOString().split('T')[0])
+  const [advAmount,       setAdvAmount]       = useState('')
+  const [advReason,       setAdvReason]       = useState('repair')
+  const [advNotes,        setAdvNotes]        = useState('')
+  const [advSaving,       setAdvSaving]       = useState(false)
+
   async function loadData() {
     if (loaded || loading) return
     setLoading(true)
     try {
-      // WHITE-LABEL TODO: fuel is fetched for the two hardcoded drivers TIM &
-      // BRUCE. Should iterate the tenant's actual driver list.
-      const tasks = [apiClient('/api/fuel/TIM').catch(()=>[]), apiClient('/api/fuel/BRUCE').catch(()=>[])]
+      // WHITE-LABEL TODO: fuel + carrier advances fetched for the two hardcoded
+      // drivers TIM & BRUCE. Should iterate the tenant's actual driver list.
+      const tasks = [
+        apiClient('/api/fuel/TIM').catch(()=>[]),
+        apiClient('/api/fuel/BRUCE').catch(()=>[]),
+        apiClient('/api/carrier-advances/TIM').catch(()=>[]),
+        apiClient('/api/carrier-advances/BRUCE').catch(()=>[]),
+      ]
       if (isBookkeeper || (!isBookkeeper && driverName !== 'BRUCE')) {
         tasks.push(apiClient('/api/escrow-payments/TIM').catch(()=>[]))
       }
       const results = await Promise.all(tasks)
       const timFuel   = results[0]
       const bruceFuel = results[1]
+      const timAdv    = results[2]
+      const bruceAdv  = results[3]
       setFuelEntries([
         ...(Array.isArray(timFuel)   ? timFuel   : []),
         ...(Array.isArray(bruceFuel) ? bruceFuel : []),
       ])
-      if (results[2]) {
-        setEscrowPayments(Array.isArray(results[2]) ? results[2] : [])
+      setCarrierAdvances([
+        ...(Array.isArray(timAdv)   ? timAdv   : []),
+        ...(Array.isArray(bruceAdv) ? bruceAdv : []),
+      ])
+      if (results[4]) {
+        setEscrowPayments(Array.isArray(results[4]) ? results[4] : [])
       }
       setLoaded(true)
     } catch (err) {
@@ -642,6 +700,19 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
     } catch {}
   }
 
+  async function refreshAdvances() {
+    try {
+      const [timAdv, bruceAdv] = await Promise.all([
+        apiClient('/api/carrier-advances/TIM').catch(()=>[]),
+        apiClient('/api/carrier-advances/BRUCE').catch(()=>[]),
+      ])
+      setCarrierAdvances([
+        ...(Array.isArray(timAdv)   ? timAdv   : []),
+        ...(Array.isArray(bruceAdv) ? bruceAdv : []),
+      ])
+    } catch {}
+  }
+
   // -- ESCROW HELPERS ------------------------------------------------
   // Period display: only show escrow that was recorded in the selected period
   function escrowForPeriod(dn) {
@@ -654,6 +725,12 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
   function escrowAllTime(dn) {
     if (dn !== 'TIM') return 0
     return escrowPayments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+  }
+
+  // -- CARRIER ADVANCE HELPERS ---------------------------------------
+  // All advances for one driver (feeds running balance + detail table).
+  function advancesForDriver(dn) {
+    return carrierAdvances.filter(a => (a.driver || '').toUpperCase() === dn.toUpperCase())
   }
 
   // -- PERIOD FUEL HELPERS -------------------------------------------
@@ -678,6 +755,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
       escrowTotal: escrowAllTime(dn),
       driver: dn,
       ownerCutPct,
+      carrierAdvances: advancesForDriver(dn),
     })
   }
 
@@ -720,6 +798,10 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
       dn === 'TIM' ? escrowPayments : [],
     )
     const fifoRows = mergeFuelRowsByMonth(fifo.debitRows)
+    // Carrier advances — all-time detail rows (newest first), for the statement table
+    const carrierAdvRows = advancesForDriver(dn)
+      .slice()
+      .sort((a,b) => String(b.advance_date||'').localeCompare(String(a.advance_date||'')))
     return {
       driverName: dn,
       periodLabel: getPeriodLabel(period, periodOffset),
@@ -728,6 +810,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
       advRows, totalAdvKept, totalReimb,
       fuelInRange, fleetFuelTotal, pocketFuelTotal,
       achLoads, totalAchDisbursed, totalAchFees,
+      carrierAdvRows,
       fifoRows, fifoUnpaid: fifo.unpaid, fifoUnfunded: fifo.unfunded,
       // Running balance fields for the summary table
       ...rb,
@@ -766,6 +849,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
       achDisbursed: achDisbPeriod,
       achFees: achFeesPeriod,
       escrowApplied: escrowPeriod, // display row: only when in this period
+      carrierAdvanceOwed: rb.allCarrierAdvance, // all-time unrepaid (reduces balance)
       stillOwed: rb.stillOwed,     // running balance — all-time correct answer
     }
   }
@@ -877,6 +961,54 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
     }
   }
 
+  // -- CARRIER ADVANCE HANDLERS ----------------------------------
+  async function saveCarrierAdvance() {
+    const amt = parseFloat(advAmount)
+    if (!amt || amt <= 0) { showToast('Enter a valid amount'); return }
+    setAdvSaving(true)
+    try {
+      try {
+        await apiClient('/api/carrier-advance', {
+          method: 'POST',
+          json: { driver: advDriver, advance_date: advDate, amount: amt, reason: advReason, notes: advNotes },
+        })
+      } catch (e) { showToast('Save failed: ' + e.message); return }
+      showToast('Carrier advance saved!')
+      setAdvAmount(''); setAdvNotes(''); setAdvReason('repair')
+      setShowAdvDrawer(false)
+      await refreshAdvances()
+    } catch (err) {
+      showToast('Save failed: ' + err.message)
+    } finally {
+      setAdvSaving(false)
+    }
+  }
+
+  async function toggleAdvanceRepaid(a) {
+    try {
+      try {
+        await apiClient('/api/carrier-advance/' + a.id, {
+          method: 'PATCH',
+          json: { repaid: a.repaid ? 0 : 1 },
+        })
+      } catch (e) { showToast('Update failed: ' + e.message); return }
+      showToast(a.repaid ? 'Advance reopened' : 'Advance marked repaid')
+      await refreshAdvances()
+    } catch (err) {
+      showToast('Update failed: ' + err.message)
+    }
+  }
+
+  async function deleteCarrierAdvance(id) {
+    try {
+      try {
+        await apiClient('/api/carrier-advance/' + id, { method: 'DELETE' })
+      } catch { showToast('Delete failed'); return }
+      showToast('Carrier advance deleted')
+      await refreshAdvances()
+    } catch { showToast('Delete failed') }
+  }
+
   function changePeriod(p) { setPeriod(p); setPeriodOffset(0) }
 
   // -- RENDER ----------------------------------------------------
@@ -893,6 +1025,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
 
   // WHITE-LABEL TODO: hardcoded two-driver list — should come from the tenant's drivers.
   const driversToShow = isBookkeeper ? ['BRUCE','TIM'] : [driverName]
+  const REASONS = ['repair','general','fuel','other']
 
   return (
     <div>
@@ -958,6 +1091,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
             const s     = driverStats(dn)
             const color = dn === 'BRUCE' ? '#1e88e5' : '#e53935'
             const fuelList = fuelEntriesForPeriod(dn)
+            const advList  = advancesForDriver(dn)
             return (
               <div key={dn} className="card" style={{ borderLeft:'3px solid ' + color, marginBottom:12 }}>
                 <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color, marginBottom:10 }}>{dn}</div>
@@ -971,10 +1105,17 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
                 <div className="amount-row"><span className="label">Rate Con Total</span><span className="value">{fmt(s.rateCon)}</span></div>
                 <div className="amount-row"><span className="label">Driver Pay</span><span className="value" style={{color:'var(--amber)'}}>{fmt(s.grossPay - s.detentionTotal)}</span></div>
                 {s.detentionTotal > 0 && <div className="amount-row"><span className="label" style={{color:'var(--green)'}}>+ Detention</span><span className="value" style={{color:'var(--green)'}}>+{fmt(s.detentionTotal)}</span></div>}
-                {s.advanceKept > 0 && <div className="amount-row"><span className="label">Advance Kept</span><span className="value" style={{color:'var(--green)'}}>{fmt(s.advanceKept)}</span></div>}
+                {s.advanceKept > 0 && <div className="amount-row"><span className="label">Broker Advance (Comdata)</span><span className="value" style={{color:'var(--green)'}}>{fmt(s.advanceKept)}</span></div>}
                 {s.reimbOwed > 0 && <div className="amount-row"><span className="label" style={{color:'var(--amber)'}}>+ Lumper Reimb</span><span className="value" style={{color:'var(--amber)'}}>+{fmt(s.reimbOwed)}</span></div>}
                 {s.fleetFuel > 0 && <div className="amount-row"><span className="label">Fleet Fuel</span><span className="value" style={{color:'var(--red)'}}>{fmt(s.fleetFuel)}</span></div>}
                 {s.achDisbursed > 0 && <div className="amount-row"><span className="label" style={{color:'#2e7d32'}}>ACH Paid Out</span><span className="value" style={{color:'#2e7d32'}}>-{fmt(s.achDisbursed)}</span></div>}
+                {/* Carrier advance: all-time unrepaid total that reduces the balance */}
+                {s.carrierAdvanceOwed > 0 && (
+                  <div className="amount-row">
+                    <span className="label" style={{color:'#e65100'}}>Carrier Advance (unrepaid)</span>
+                    <span className="value" style={{color:'#e65100'}}>-{fmt(s.carrierAdvanceOwed)}</span>
+                  </div>
+                )}
                 {/* Escrow: display row only when it was recorded in this period */}
                 {s.escrowApplied > 0 && (
                   <div className="amount-row">
@@ -1030,6 +1171,28 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
                         </div>
                       </div>
                       )
+                    ))}
+                  </div>
+                )}
+
+                {/* Carrier advances for this driver (all-time list w/ repaid toggle) */}
+                {advList.length > 0 && (
+                  <div style={{marginTop:8,paddingTop:8,borderTop:'1px solid var(--border)'}}>
+                    <div style={{ fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginBottom:6 }}>CARRIER ADVANCES</div>
+                    {advList.map(a => (
+                      <div key={a.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', paddingBottom:6 }}>
+                        <div>
+                          <span style={{ fontSize:11, color:'#e65100', fontFamily:'var(--font-head)', fontWeight:700, textTransform:'uppercase' }}>{a.reason||'general'}</span>
+                          <span style={{ fontSize:11, color:'var(--grey)', marginLeft:6 }}>{a.advance_date}</span>
+                          {a.notes && <span style={{ fontSize:10, color:'var(--grey)', marginLeft:6 }}>{a.notes}</span>}
+                          {a.repaid ? <span style={{ fontSize:9, color:'#2e7d32', marginLeft:6, fontWeight:700 }}>REPAID</span> : null}
+                        </div>
+                        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                          <span style={{ fontFamily:'var(--font-head)', fontWeight:700, color:a.repaid?'var(--grey)':'#e65100' }}>{fmt(a.amount)}</span>
+                          <button onClick={() => toggleAdvanceRepaid(a)} style={{ background:'transparent', border:'none', color:a.repaid?'var(--grey)':'#4caf50', cursor:'pointer', fontSize:11, padding:'0 2px', fontFamily:'var(--font-head)', fontWeight:700 }}>{a.repaid?'REOPEN':'REPAID'}</button>
+                          <button onClick={() => deleteCarrierAdvance(a.id)} style={{ background:'transparent', border:'none', color:'#666', cursor:'pointer', fontSize:14, padding:'0 2px' }}>X</button>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -1102,6 +1265,58 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
               </div>
               <button onClick={saveFuelEntry} disabled={fuelSaving||!fuelAmount} style={{ width:'100%', padding:'12px 0', borderRadius:10, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:900, fontSize:14, background:fuelSaving||!fuelAmount?'#555':'#4caf50', color:'#fff', letterSpacing:'0.06em' }}>
                 {fuelSaving ? 'SAVING...' : 'SAVE FUEL ENTRY'}
+              </button>
+            </div>
+          )}
+
+          {/* Carrier advance entry form */}
+          <button
+            onClick={() => {
+              setShowAdvDrawer(p => !p)
+              setAdvDate(new Date().toISOString().split('T')[0])
+              setAdvAmount(''); setAdvNotes(''); setAdvReason('repair')
+            }}
+            style={{ width:'100%', padding:'12px 0', borderRadius:10, border:'none', marginBottom:12, fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, cursor:'pointer', background: showAdvDrawer ? 'var(--navy3)' : '#3a2a1a', color: showAdvDrawer ? 'var(--grey)' : '#ffab40', letterSpacing:'0.06em' }}
+          >
+            {showAdvDrawer ? 'X CANCEL CARRIER ADVANCE' : '\uD83D\uDCB0 ADD CARRIER ADVANCE'}
+          </button>
+
+          {showAdvDrawer && (
+            <div className="card" style={{ marginBottom:12, border:'1px solid #4a3a2a' }}>
+              <div style={{ fontFamily:'var(--font-head)', fontSize:12, color:'#ffab40', letterSpacing:'0.1em', marginBottom:6 }}>NEW CARRIER ADVANCE</div>
+              <div style={{ fontSize:10, color:'var(--grey)', marginBottom:12, fontFamily:'var(--font-head)' }}>Direct carrier-to-driver loan — reduces the driver's balance until repaid. Separate from broker comdata advances.</div>
+              {isBookkeeper && (
+                <div style={{ marginBottom:12 }}>
+                  <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>DRIVER</div>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                    {['TIM','BRUCE'].map(d => (
+                      <button key={d} onClick={() => setAdvDriver(d)} style={{ padding:'10px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, background: advDriver===d?(d==='TIM'?'#e53935':'#1e88e5'):'var(--navy3)', color: advDriver===d?'#fff':'var(--grey)' }}>{d}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>REASON</div>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:6 }}>
+                  {REASONS.map(r => (
+                    <button key={r} onClick={() => setAdvReason(r)} style={{ padding:'9px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:10, letterSpacing:'0.04em', textTransform:'uppercase', background:advReason===r?'#ffab40':'var(--navy3)', color:advReason===r?'var(--navy)':'var(--grey)' }}>{r}</button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>DATE</div>
+                <input type="date" value={advDate} onChange={e => setAdvDate(e.target.value)} style={inputStyle} />
+              </div>
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>AMOUNT ($)</div>
+                <input type="text" inputMode="decimal" placeholder="0.00" value={advAmount} onChange={e => setAdvAmount(e.target.value)} style={{ ...inputStyle, fontSize:22, fontWeight:700, fontFamily:'var(--font-head)' }} />
+              </div>
+              <div style={{ marginBottom:14 }}>
+                <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>NOTES (optional)</div>
+                <input type="text" placeholder="e.g. Breakdown in Cheyenne — wired Comdata" value={advNotes} onChange={e => setAdvNotes(e.target.value)} style={inputStyle} />
+              </div>
+              <button onClick={saveCarrierAdvance} disabled={advSaving||!advAmount} style={{ width:'100%', padding:'12px 0', borderRadius:10, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:900, fontSize:14, background:advSaving||!advAmount?'#555':'#ff9800', color:'#fff', letterSpacing:'0.06em' }}>
+                {advSaving ? 'SAVING...' : 'SAVE CARRIER ADVANCE'}
               </button>
             </div>
           )}
