@@ -100,33 +100,60 @@ export function calcPay(load, ownerCutPct = DEFAULT_OWNER_CUT) {
   return { gross: base, ownerCut: base * cut, driverNet: (base * (1 - cut)) + detention }
 }
 
+// BROKER ADVANCE (Comdata / Express Code) — the leftover after a load's comdata
+// covers its own lumpers/incidentals. This is money the BROKER advanced the
+// driver directly against the load: anything beyond the offsetting costs is cash
+// the driver already collected, so it REDUCES that driver's settlement. Display
+// this line as "Broker Advance (Comdata)" on the settlement side. (Internal name
+// kept as advanceKept so existing callers are undisturbed; brokerAdvanceKept is
+// a same-value alias for new, clearly-labeled UI.)
 export function advanceKept(load) {
   const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(load)
   return Math.max(0, comdataTotal - lumperTotal - incTotal)
 }
+export const brokerAdvanceKept = advanceKept; // alias: settlement label "Broker Advance (Comdata)"
 
 export function reimbursementOwed(load) {
   const { comdataTotal, lumperTotal, incTotal } = getLoadTotals(load)
   return Math.max(0, (lumperTotal + incTotal) - comdataTotal)
 }
 
+// CARRIER ADVANCE — a direct carrier->driver loan (breakdown/repair/general/fuel),
+// separate from broker billing. An UNREPAID advance is money the carrier already
+// handed the driver, so it reduces what the company still owes the driver, the
+// same direction as fuel and escrow. Repaid advances (repaid truthy) are closed
+// and do NOT reduce the balance. Accepts the rows returned by /api/carrier-advances.
+export function carrierAdvanceOwed(carrierAdvances) {
+  const list = Array.isArray(carrierAdvances) ? carrierAdvances : []
+  return list
+    .filter(a => !a.repaid)
+    .reduce((s,a) => s + (parseFloat(a.amount) || 0), 0)
+}
+
 // -- RUNNING BALANCE — all-time, the ONE formula -----------------------------
 // Now takes ownerCutPct from the tenant. Behavior identical to v4 when
 // ownerCutPct = 0.10 and no loads are flagged owner-operator.
-export function computeRunningBalance({ loads, fuelEntries, escrowTotal, driver, ownerCutPct = DEFAULT_OWNER_CUT }) {
+//
+// carrierAdvances (OPTIONAL): array of carrier_advances rows for this driver.
+//   Omit it (or pass []) and the result is byte-identical to before — this is
+//   what keeps existing settlements unchanged until the UI begins supplying
+//   advances. Unrepaid advances subtract from stillOwed, like fuel/escrow.
+export function computeRunningBalance({ loads, fuelEntries, escrowTotal, driver, ownerCutPct = DEFAULT_OWNER_CUT, carrierAdvances = [] }) {
   const cut    = normalizeOwnerCut(ownerCutPct)
   const dn     = driver
   const dLoads = (Array.isArray(loads) ? loads : []).filter(l => l.driver === dn)
   const fuel   = Array.isArray(fuelEntries) ? fuelEntries : []
-  const allGrossPay     = dLoads.reduce((s,l) => s + calcPay(l, cut).driverNet, 0)
-  const allAdvKept      = dLoads.reduce((s,l) => s + advanceKept(l), 0)
-  const allReimb        = dLoads.reduce((s,l) => s + reimbursementOwed(l), 0)
-  const allFleetFuel    = fuel.filter(f => f.driver === dn.toUpperCase() && f.fuel_type === 'fleet').reduce((s,f) => s+(parseFloat(f.amount)||0), 0)
-  const allAchDisbursed = dLoads.filter(l => l.ach_payment).reduce((s,l) => s+(parseFloat(l.ach_received)||0), 0)
-  const allEscrow       = parseFloat(escrowTotal) || 0
-  const stillOwedRaw    = allGrossPay - allAdvKept + allReimb - allFleetFuel - allAchDisbursed - allEscrow
+  const allGrossPay      = dLoads.reduce((s,l) => s + calcPay(l, cut).driverNet, 0)
+  const allAdvKept       = dLoads.reduce((s,l) => s + advanceKept(l), 0)
+  const allReimb         = dLoads.reduce((s,l) => s + reimbursementOwed(l), 0)
+  const allFleetFuel     = fuel.filter(f => f.driver === dn.toUpperCase() && f.fuel_type === 'fleet').reduce((s,f) => s+(parseFloat(f.amount)||0), 0)
+  const allAchDisbursed  = dLoads.filter(l => l.ach_payment).reduce((s,l) => s+(parseFloat(l.ach_received)||0), 0)
+  const allEscrow        = parseFloat(escrowTotal) || 0
+  const allCarrierAdvance = carrierAdvanceOwed(carrierAdvances)
+  const stillOwedRaw     = allGrossPay - allAdvKept + allReimb - allFleetFuel - allAchDisbursed - allEscrow - allCarrierAdvance
   return {
     allGrossPay, allAdvKept, allReimb, allFleetFuel, allAchDisbursed, allEscrow,
+    allCarrierAdvance,
     allDetention: dLoads.reduce((s,l) => s+(parseFloat(l.detention)||0), 0),
     allGrossCompanyShare: dLoads.reduce((s,l) => s+(parseFloat(l.base_pay)||0)*(1 - cut), 0),
     stillOwedRaw,
