@@ -879,6 +879,57 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
+    // ── TENANT SETTINGS GET ──────────────────────────────
+    // Returns the logged-in tenant's own white-label settings (split, branding,
+    // invoice identity). Tenant resolved from the token — a tenant can only ever
+    // read its OWN row. Any logged-in user of the tenant may read.
+    if (path === '/api/tenant/settings' && request.method === 'GET') {
+      try {
+        const row = await env.DB.prepare(
+          `SELECT id, company_name, slug, status, driver_split_pct,
+                  display_name, logo_url, brand_color, support_email,
+                  legal_name, mc_number, dot_number, remit_address, remit_email
+           FROM tenants WHERE id = ?`
+        ).bind(T).first();
+        if (!row) return json({ error: 'Tenant not found' }, 404);
+        return json(row);
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── TENANT SETTINGS PATCH ────────────────────────────
+    // Updates the tenant's own settings. OWNER ONLY — a driver/bookkeeper cannot
+    // change the company split or branding. Tenant resolved from the token, so
+    // an owner can only ever modify their OWN tenant row.
+    if (path === '/api/tenant/settings' && request.method === 'PATCH') {
+      try {
+        if (ctx.role !== 'owner') return json({ error: 'Only the owner can change company settings' }, 403);
+        const b = await request.json();
+        const fields = []; const values = [];
+
+        // Split: accept whole number or fraction, clamp 1..50 (whole %).
+        if (b.driver_split_pct !== undefined) {
+          let pct = Number(b.driver_split_pct);
+          if (isNaN(pct)) return json({ error: 'driver_split_pct must be a number' }, 400);
+          if (pct > 0 && pct < 1) pct = pct * 100;   // 0.10 -> 10
+          if (pct < 1)  pct = 1;
+          if (pct > 50) pct = 50;
+          fields.push('driver_split_pct=?'); values.push(pct);
+        }
+
+        const textFields = ['display_name','logo_url','brand_color','support_email',
+                            'legal_name','mc_number','dot_number','remit_address','remit_email'];
+        textFields.forEach(key => {
+          if (b[key] !== undefined) { fields.push(key + '=?'); values.push(String(b[key])); }
+        });
+
+        if (fields.length === 0) return json({ error: 'Nothing to update' }, 400);
+        fields.push("updated_at=datetime('now')");
+        values.push(T);
+        await env.DB.prepare('UPDATE tenants SET ' + fields.join(', ') + ' WHERE id=?').bind(...values).run();
+        return json({ ok: true });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
     return json({ message: 'Load Ledger V5 API — dbappsystems.com' });
   },
 };
