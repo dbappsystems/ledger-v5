@@ -40,6 +40,12 @@
 -- rewrite. is_owner_operator drives the 100%-keep path in settlementMath.calcPay
 -- (per-driver, replacing `driver === 'BRUCE'`). color replaces the hardcoded
 -- per-driver card/leaderboard colors in Loads.jsx.
+--   state_label / state_rate: per-driver STATE INCOME TAX, used by Tax.jsx. This
+--   is legitimate per-driver business data (a driver's home state sets the rate),
+--   and replaces the hardcoded STATE_RATES{TIM,BRUCE} table in the code. rate is
+--   a decimal fraction (0.0530 = 5.30%); label is the human state name. A blank
+--   rate (0) means "not set" — Tax.jsx falls back to the tenant owner-operator's
+--   state so a new driver isn't taxed at some other client's hardcoded rate.
 CREATE TABLE IF NOT EXISTS drivers (
   id                TEXT PRIMARY KEY,
   tenant_id         TEXT NOT NULL,
@@ -47,6 +53,8 @@ CREATE TABLE IF NOT EXISTS drivers (
   display_name      TEXT NOT NULL DEFAULT '',      -- human label for UI; falls back to name if blank
   is_owner_operator INTEGER NOT NULL DEFAULT 0,    -- 1 = keeps 100% of base, no company split
   color             TEXT NOT NULL DEFAULT '#1e88e5',
+  state_label       TEXT NOT NULL DEFAULT '',      -- driver's home state name (e.g. 'Wisconsin'); '' = not set
+  state_rate        REAL NOT NULL DEFAULT 0,       -- state income tax as a fraction (0.0530 = 5.30%); 0 = not set
   active            INTEGER NOT NULL DEFAULT 1,
   created_at        TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
@@ -60,10 +68,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_tenant_name ON drivers(tenant_id, 
 -- nothing changes for the live client. BRUCE is the owner-operator (kept 100% in
 -- v4 via the hardcoded name check); TIM is a standard split driver. Colors match
 -- the existing hardcoded Loads.jsx leaderboard (#1e88e5 blue / #e53935 red).
-INSERT OR IGNORE INTO drivers (id, tenant_id, name, display_name, is_owner_operator, color, active)
+-- State tax matches the retired STATE_RATES table: BRUCE = Wisconsin 5.30%,
+-- TIM = Illinois 4.95%.
+INSERT OR IGNORE INTO drivers (id, tenant_id, name, display_name, is_owner_operator, color, state_label, state_rate, active)
 VALUES
-  ('00000000-0000-0000-0000-0000000d0001', '00000000-0000-0000-0000-000000000001', 'BRUCE', 'Bruce', 1, '#1e88e5', 1),
-  ('00000000-0000-0000-0000-0000000d0002', '00000000-0000-0000-0000-000000000001', 'TIM',   'Tim',   0, '#e53935', 1);
+  ('00000000-0000-0000-0000-0000000d0001', '00000000-0000-0000-0000-000000000001', 'BRUCE', 'Bruce', 1, '#1e88e5', 'Wisconsin', 0.0530, 1),
+  ('00000000-0000-0000-0000-0000000d0002', '00000000-0000-0000-0000-000000000001', 'TIM',   'Tim',   0, '#e53935', 'Illinois',  0.0495, 1);
 
 -- 2) CARRIER ADVANCES -------------------------------------------------------
 -- Carrier -> driver direct loans. A first-class settlement deduction: the amount
