@@ -8,9 +8,9 @@
 // is removed. The per-tenant split (tenantSettings.driver_split_pct) is threaded
 // as `ownerCutPct` into the components that do settlement math.
 //
-// WHITE-LABEL TODO (next): the bookkeeper VIEWING bar still hardcodes
-// ['BRUCE','TIM']; it must read the tenant's own drivers. Header/logo already
-// read tenantSettings.display_name.
+// WHITE-LABEL: the bookkeeper VIEWING bar now reads the tenant's own drivers via
+// useDrivers() (GET /api/drivers, falls back to BRUCE/TIM). Header/logo read
+// tenantSettings.display_name.
 
 import { useState, useEffect } from 'react'
 import RateCon          from './RateCon.jsx'
@@ -22,6 +22,7 @@ import Assets           from './Assets.jsx'
 import Tax              from './Tax.jsx'
 import SettlementReport from './SettlementReport.jsx'
 import BookkeeperProfile from './BookkeeperProfile.jsx'
+import { useDrivers }   from './useDrivers.js'
 
 import { api, login as apiLogin, logout as apiLogout, getSession } from './api.js'
 
@@ -47,11 +48,22 @@ export default function App() {
   const [loadsSubView,    setLoadsSubView]    = useState('list')
   const [driver,          setDriver]          = useState(null)
   const [role,            setRole]            = useState(null)
-  const [viewDriver,      setViewDriver]      = useState('BRUCE')
+  const [viewDriver,      setViewDriver]      = useState(null)
   const [load,            setLoad]            = useState(newLoad())
   const [loads,           setLoads]           = useState([])
   const [toast,           setToast]           = useState(null)
   const [tenantSettings,  setTenantSettings]  = useState(null)
+
+  // WHITE-LABEL: the tenant's own drivers (names + colors), replacing the old
+  // hardcoded ['BRUCE','TIM']. Falls back to the seeded identities if the
+  // /api/drivers call is unavailable, so behavior never regresses.
+  const { names: driverNames } = useDrivers()
+
+  // Default the bookkeeper "viewing" driver to the tenant's first driver once
+  // the list is known. Keeps working if the list changes between tenants.
+  useEffect(() => {
+    if (viewDriver == null && driverNames.length > 0) setViewDriver(driverNames[0])
+  }, [driverNames, viewDriver])
 
   // Per-tenant owner/company split (whole-number %, 1..50). Defaults to 10
   // until tenant settings load — keeps Edgerton's historical 90/10 unchanged.
@@ -382,8 +394,8 @@ export default function App() {
         {isBookkeeper && (tab === 'maintenance' || tab === 'assets') ? (
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
             <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em' }}>VIEWING:</div>
-            {/* WHITE-LABEL TODO: hardcoded driver list — should be the tenant's own drivers. */}
-            {['BRUCE','TIM'].map(d => (
+            {/* WHITE-LABEL: tenant's own drivers via useDrivers() (was hardcoded BRUCE/TIM). */}
+            {driverNames.map(d => (
               <button key={d} onClick={() => setViewDriver(d)} style={{ padding:'7px 16px', borderRadius:8, border:'none', background: viewDriver === d ? 'var(--amber)' : 'var(--navy3)', color: viewDriver === d ? '#0A1628' : 'var(--grey)', fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>{d}</button>
             ))}
           </div>
