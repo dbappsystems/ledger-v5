@@ -947,6 +947,173 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
+    // ── DRIVERS LIST ─────────────────────────────────────
+    // The tenant's own driver roster (replaces hardcoded BRUCE/TIM). Any logged-in
+    // user of the tenant may read it (the UI needs it for tabs/leaderboard/colors).
+    if (path === '/api/drivers' && request.method === 'GET') {
+      try {
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM drivers WHERE tenant_id=? ORDER BY active DESC, name ASC'
+        ).bind(T).all();
+        return json(results);
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── DRIVER CREATE / UPSERT ───────────────────────────
+    // Owner/bookkeeper only. name is the canonical UPPERCASE key, unique per
+    // tenant; re-posting an existing name updates that driver's fields.
+    if (path === '/api/drivers' && request.method === 'POST') {
+      try {
+        if (ctx.role !== 'owner' && ctx.role !== 'bookkeeper') return json({ error: 'Not authorized' }, 403);
+        const b = await request.json();
+        if (!b.name || !b.name.trim()) return json({ error: 'name is required' }, 400);
+        const name = b.name.trim().toUpperCase();
+        const existing = await env.DB.prepare(
+          'SELECT id FROM drivers WHERE tenant_id=? AND name=?'
+        ).bind(T, name).first();
+        if (existing) {
+          const fields = []; const values = [];
+          if (b.display_name      !== undefined) { fields.push('display_name=?');      values.push(String(b.display_name)); }
+          if (b.is_owner_operator !== undefined) { fields.push('is_owner_operator=?'); values.push(b.is_owner_operator ? 1 : 0); }
+          if (b.color             !== undefined) { fields.push('color=?');             values.push(String(b.color)); }
+          if (b.active            !== undefined) { fields.push('active=?');            values.push(b.active ? 1 : 0); }
+          if (fields.length === 0) return json({ id: existing.id, updated: true });
+          fields.push("updated_at=datetime('now')");
+          values.push(existing.id, T);
+          await env.DB.prepare('UPDATE drivers SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
+          return json({ id: existing.id, updated: true });
+        }
+        const id = crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO drivers
+            (id, tenant_id, name, display_name, is_owner_operator, color, active, created_at, updated_at)
+          VALUES (?,?,?,?,?,?,?,datetime('now'),datetime('now'))
+        `).bind(
+          id, T, name,
+          b.display_name || '',
+          b.is_owner_operator ? 1 : 0,
+          b.color || '#1e88e5',
+          b.active === undefined ? 1 : (b.active ? 1 : 0),
+        ).run();
+        return json({ id, updated: false });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── DRIVER PATCH ─────────────────────────────────────
+    // Owner/bookkeeper only.
+    if (path.startsWith('/api/drivers/') && path.split('/').length === 4 && request.method === 'PATCH') {
+      try {
+        if (ctx.role !== 'owner' && ctx.role !== 'bookkeeper') return json({ error: 'Not authorized' }, 403);
+        const id = path.split('/')[3];
+        const b = await request.json();
+        const fields = []; const values = [];
+        if (b.name              !== undefined) { fields.push('name=?');              values.push(String(b.name).trim().toUpperCase()); }
+        if (b.display_name      !== undefined) { fields.push('display_name=?');      values.push(String(b.display_name)); }
+        if (b.is_owner_operator !== undefined) { fields.push('is_owner_operator=?'); values.push(b.is_owner_operator ? 1 : 0); }
+        if (b.color             !== undefined) { fields.push('color=?');             values.push(String(b.color)); }
+        if (b.active            !== undefined) { fields.push('active=?');            values.push(b.active ? 1 : 0); }
+        if (fields.length === 0) return json({ error: 'Nothing to update' }, 400);
+        fields.push("updated_at=datetime('now')");
+        values.push(id, T);
+        await env.DB.prepare('UPDATE drivers SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
+        return json({ ok: true });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── DRIVER DELETE ────────────────────────────────────
+    // Owner only. Soft-delete is preferred in the UI (set active=0) so historical
+    // loads keyed by this driver's name stay intact; hard delete is allowed but
+    // does NOT touch that driver's existing loads/fuel/advances.
+    if (path.startsWith('/api/drivers/') && path.split('/').length === 4 && request.method === 'DELETE') {
+      try {
+        if (ctx.role !== 'owner') return json({ error: 'Not authorized' }, 403);
+        const id = path.split('/')[3];
+        const row = await env.DB.prepare('SELECT id FROM drivers WHERE id=? AND tenant_id=?').bind(id, T).first();
+        if (!row) return json({ error: 'Driver not found' }, 404);
+        await env.DB.prepare('DELETE FROM drivers WHERE id=? AND tenant_id=?').bind(id, T).run();
+        return json({ ok: true });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── CARRIER ADVANCES GET (per driver) ────────────────
+    // Carrier->driver direct loans for one driver. Reduces that driver's
+    // settlement until repaid. Separate from broker (comdata) billing.
+    if (path.startsWith('/api/carrier-advances/') && request.method === 'GET') {
+      try {
+        const driver = path.split('/')[3].toUpperCase();
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM carrier_advances WHERE tenant_id=? AND driver=? ORDER BY advance_date DESC, created_at DESC LIMIT 500'
+        ).bind(T, driver).all();
+        return json(results);
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── CARRIER ADVANCE POST ─────────────────────────────
+    // Owner/bookkeeper only. reason: repair | general | fuel | other.
+    if (path === '/api/carrier-advance' && request.method === 'POST') {
+      try {
+        if (ctx.role !== 'owner' && ctx.role !== 'bookkeeper') return json({ error: 'Not authorized' }, 403);
+        const b = await request.json();
+        if (!b.driver) return json({ error: 'Missing driver' }, 400);
+        const amount = parseFloat(b.amount);
+        if (!amount || amount <= 0) return json({ error: 'Invalid amount' }, 400);
+        const allowedReasons = ['repair','general','fuel','other'];
+        const reason = allowedReasons.includes(b.reason) ? b.reason : 'general';
+        const id = crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO carrier_advances
+            (id, tenant_id, driver, amount, advance_date, reason, notes, asset_id, repaid, repaid_date, created_at, updated_at)
+          VALUES (?,?,?,?,?,?,?,?,0,'',datetime('now'),datetime('now'))
+        `).bind(
+          id, T, b.driver.toUpperCase(), amount,
+          b.advance_date || new Date().toISOString().split('T')[0],
+          reason, b.notes || '', b.asset_id || '',
+        ).run();
+        return json({ id });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── CARRIER ADVANCE PATCH ────────────────────────────
+    // Owner/bookkeeper only. Edit amount/reason/notes or mark repaid.
+    if (path.startsWith('/api/carrier-advance/') && path.split('/').length === 4 && request.method === 'PATCH') {
+      try {
+        if (ctx.role !== 'owner' && ctx.role !== 'bookkeeper') return json({ error: 'Not authorized' }, 403);
+        const id = path.split('/')[3];
+        const b = await request.json();
+        const fields = []; const values = [];
+        if (b.amount       !== undefined) { fields.push('amount=?');       values.push(parseFloat(b.amount) || 0); }
+        if (b.advance_date !== undefined) { fields.push('advance_date=?'); values.push(String(b.advance_date)); }
+        if (b.reason       !== undefined) {
+          const allowedReasons = ['repair','general','fuel','other'];
+          fields.push('reason=?'); values.push(allowedReasons.includes(b.reason) ? b.reason : 'general');
+        }
+        if (b.notes        !== undefined) { fields.push('notes=?');        values.push(String(b.notes)); }
+        if (b.asset_id     !== undefined) { fields.push('asset_id=?');     values.push(String(b.asset_id)); }
+        if (b.repaid       !== undefined) {
+          fields.push('repaid=?');      values.push(b.repaid ? 1 : 0);
+          fields.push('repaid_date=?'); values.push(b.repaid ? (b.repaid_date || new Date().toISOString().split('T')[0]) : '');
+        }
+        if (fields.length === 0) return json({ error: 'Nothing to update' }, 400);
+        fields.push("updated_at=datetime('now')");
+        values.push(id, T);
+        await env.DB.prepare('UPDATE carrier_advances SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
+        return json({ ok: true });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── CARRIER ADVANCE DELETE ───────────────────────────
+    // Owner/bookkeeper only.
+    if (path.startsWith('/api/carrier-advance/') && path.split('/').length === 4 && request.method === 'DELETE') {
+      try {
+        if (ctx.role !== 'owner' && ctx.role !== 'bookkeeper') return json({ error: 'Not authorized' }, 403);
+        const id = path.split('/')[3];
+        const row = await env.DB.prepare('SELECT id FROM carrier_advances WHERE id=? AND tenant_id=?').bind(id, T).first();
+        if (!row) return json({ error: 'Advance not found' }, 404);
+        await env.DB.prepare('DELETE FROM carrier_advances WHERE id=? AND tenant_id=?').bind(id, T).run();
+        return json({ ok: true });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
     return json({ message: 'Load Ledger V5 API — dbappsystems.com' });
   },
 };
