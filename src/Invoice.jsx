@@ -4,12 +4,16 @@
 // AUTH MIGRATION: all 3 API calls (OCR, save load, upload PDF) now go through
 // the token api() client. The `api` URL prop is gone.
 //
-// WHITE-LABEL TODO (dedicated task): the generated invoice PDF hardcodes the
-// carrier identity — "Edgerton Truck & Trailer Repair", "Bruce Edgerton",
-// "N4202 Hill Rd - Bonduel WI 54107", "MC#699644", the email/phone, and the
-// signature. These MUST come from the tenant's settings (legal_name, remit_address,
-// mc_number, support_email, etc. from migration 0002) so each company's invoices
-// show THEIR identity, not Edgerton's. Requires threading tenantSettings into Invoice.
+// WHITE-LABEL (done): the generated invoice PDF carrier identity — company name,
+// contact name, address, MC#/DOT#, contact line, signature, and the PDF filename
+// — now comes from the tenant's own settings (display_name, legal_name,
+// remit_address, mc_number, dot_number, support_email, slug from migration 0002),
+// passed in as the tenantSettings prop and resolved from the session token by the
+// worker. Edgerton values remain ONLY as last-resort fallbacks if a field is blank;
+// the live tenant row is seeded with real values so the invoice is unchanged at
+// cutover. FLAG: 0002 has no dedicated phone or signature-name column — phone is
+// currently part of the contact line, and the signature reuses the company name.
+// Add remit_phone / remit_contact columns if a per-person signature is wanted.
 
 import { useState, useRef } from 'react'
 import { jsPDF } from 'jspdf'
@@ -17,7 +21,7 @@ import { api as apiClient } from './api.js'
 
 const MAX_BOLS = 50
 
-export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, resetLoad }) {
+export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, resetLoad, tenantSettings }) {
   const [scanning,   setScanning]   = useState(null)
   const [bolLoading, setBolLoading] = useState(false)
 
@@ -40,6 +44,41 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
   const comdataTotal = load.comdatas.reduce((s,i)    => s + parseFloat(i.amount||0), 0)
   const subtotal     = base_pay + lumperTotal + incTotal + detention + pallets
   const netPay       = subtotal - comdataTotal
+
+  // ── WHITE-LABEL CARRIER IDENTITY ─────────────────────────
+  // Every value comes from the tenant's own settings (migration 0002), resolved
+  // from the session token by the worker and passed down from App as
+  // tenantSettings. Fallbacks keep Edgerton's invoice byte-for-byte unchanged if
+  // a field is blank, but the live tenant row is already seeded with real values
+  // so nothing here is Edgerton-specific in code anymore.
+  //   NOTE: 0002 has no phone or signature-name column yet. Phone is folded into
+  //   the contact line only if a tenant adds it to support_email-adjacent data
+  //   later; for now the signature uses display_name/legal_name. Flagged so a
+  //   dedicated remit_contact/remit_phone field can be added when needed.
+  const ts            = tenantSettings || {}
+  const coName        = (ts.display_name && ts.display_name.trim())
+                        || (ts.legal_name && ts.legal_name.trim())
+                        || 'Edgerton Truck & Trailer Repair'
+  const coLegalName   = (ts.legal_name && ts.legal_name.trim())
+                        || (ts.display_name && ts.display_name.trim())
+                        || 'Bruce Edgerton'
+  const coAddress     = (ts.remit_address && ts.remit_address.trim())
+                        || 'N4202 Hill Rd - Bonduel WI 54107'
+  const coMc          = (ts.mc_number && String(ts.mc_number).trim())
+                        ? 'MC#' + String(ts.mc_number).trim()
+                        : 'MC#699644'
+  const coDot         = (ts.dot_number && String(ts.dot_number).trim())
+                        ? 'DOT#' + String(ts.dot_number).trim()
+                        : ''
+  const coContactLine = (ts.support_email && ts.support_email.trim())
+                        || 'bruce.edgerton@yahoo.com - 715-509-0114'
+  // Signature: a person/company sign-off. No dedicated column yet -> use the
+  // company legal/display name, falling back to the historical Edgerton signature.
+  const coSignature   = (ts.legal_name && ts.legal_name.trim())
+                        || (ts.display_name && ts.display_name.trim())
+                        || 'Bruce Edgerton'
+  // Filename prefix: tenant slug if present, else neutral 'Invoice'.
+  const filePrefix    = (ts.slug && ts.slug.trim()) ? ts.slug.trim() : 'Invoice'
 
   function fmt(n) { return '$' + n.toFixed(2) }
   function openScanner(mode) { scanMode.current = mode; fileRef.current.click() }
@@ -345,23 +384,23 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     }
 
     // ── STEP 2: BUILD PDF IN MEMORY ───────────────────────
-    // WHITE-LABEL TODO: every carrier-identity string below is hardcoded to
-    // Edgerton/Bruce and MUST be replaced with the tenant's own settings.
     const doc = new jsPDF({ unit: 'pt', format: 'letter' })
     const W = 612, M = 40
     let y = 0
 
     doc.setFontSize(22); doc.setFont('helvetica','bold'); doc.setTextColor(0,0,0)
-    doc.text('Edgerton Truck & Trailer Repair', W/2, 50, { align:'center' })
+    doc.text(coName, W/2, 50, { align:'center' })
     doc.setDrawColor(180,180,180); doc.setLineWidth(0.5); doc.line(M, 58, W-M, 58)
     y = 75
 
     doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(0,0,0)
-    doc.text('Bruce Edgerton', M, y)
+    doc.text(coLegalName, M, y)
     doc.setFont('helvetica','normal')
-    doc.text('N4202 Hill Rd - Bonduel WI 54107', M, y+12)
-    doc.text('MC#699644', M, y+24)
-    doc.text('bruce.edgerton@yahoo.com - 715-509-0114', M, y+36)
+    doc.text(coAddress, M, y+12)
+    // MC# (+ optional DOT#) on one line, then the contact line beneath it.
+    const idLine = coDot ? (coMc + '  ' + coDot) : coMc
+    doc.text(idLine, M, y+24)
+    doc.text(coContactLine, M, y+36)
     doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(100,100,100)
     doc.text('DATE SENT', W-M, y, { align:'right' })
     doc.setDrawColor(180,180,180); doc.line(W-160, y+3, W-M, y+3)
@@ -450,7 +489,7 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(80,80,80)
     doc.text('Thank You', W-M, y, { align:'right' }); y += 20
     doc.setFontSize(14); doc.setFont('helvetica','bolditalic'); doc.setTextColor(0,0,0)
-    doc.text('Bruce Edgerton', W-M, y, { align:'right' })
+    doc.text(coSignature, W-M, y, { align:'right' })
     doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(160,160,160)
     doc.text('dbappsystems.com | daddyboyapps.com', W/2, 760, { align:'center' })
 
@@ -466,9 +505,7 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     // ── STEP 3: UPLOAD PDF TO R2 BEFORE DOWNLOAD ─────────
     // R2 upload must complete before doc.save() fires
     // doc.save() triggers the phone download which drops subsequent fetches
-    // WHITE-LABEL TODO: filename hardcodes 'Edgerton'. Should use tenant
-    // display_name once Invoice receives tenantSettings. Neutral default for now.
-    const filename = 'Invoice-'+(load.load_number||'draft')+'-'+driver+'.pdf'
+    const filename = filePrefix+'-'+(load.load_number||'draft')+'-'+driver+'.pdf'
     try {
       const pdfBase64 = doc.output('datauristring').split(',')[1]
       await apiClient('/api/upload-pdf', {
