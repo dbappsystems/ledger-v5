@@ -15,8 +15,8 @@
 //   driven by the tenant's OWN driver list, not two fixed names.
 //   DONE: generateCorrectedPDF() carrier identity now comes from tenantSettings
 //   (display_name, legal_name, remit_address, mc_number, dot_number,
-//   support_email), identical to Invoice.jsx, with Edgerton values as last-resort
-//   fallbacks only. The corrected-invoice filename is neutral ('CORRECTED-Invoice-').
+//   support_email), identical to Invoice.jsx, with NEUTRAL/blank fallbacks
+//   only. The corrected-invoice filename is neutral ('CORRECTED-Invoice-').
 //
 // 2026-06-11: RATE CON CHRONOLOGY — loads are listed and dated by DELIVERY DATE.
 //             parseAppDate() handles MM/DD/YYYY, M/D/YYYY, MM/DD/YY and YYYY-MM-DD.
@@ -188,34 +188,34 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
 
   // ── CORRECTED PDF ─────────────────────────────────────────
   // White-label: carrier identity is derived from tenantSettings at the top of
-  // this function (identical to Invoice.jsx), with Edgerton values as fallbacks.
+  // this function (identical to Invoice.jsx), with neutral/blank fallbacks.
   function generateCorrectedPDF(load, data, newNetPay) {
     // ── WHITE-LABEL CARRIER IDENTITY ──────────────────────
     // Identical derivation to Invoice.jsx so the corrected invoice shows the
     // SAME carrier identity as the original. Values come from the tenant's own
     // settings (migration 0002), resolved from the session token by the worker
-    // and passed from App as tenantSettings. Edgerton values are last-resort
-    // fallbacks only — the live tenant row is seeded with real values.
+    // and passed from App as tenantSettings. Fallbacks are NEUTRAL/blank — no
+    // client's data lives in code; each tenant's real values live in its row.
     const ts            = tenantSettings || {}
     const coName        = (ts.display_name && ts.display_name.trim())
                           || (ts.legal_name && ts.legal_name.trim())
-                          || 'Edgerton Truck & Trailer Repair'
+                          || ''
     const coLegalName   = (ts.legal_name && ts.legal_name.trim())
                           || (ts.display_name && ts.display_name.trim())
-                          || 'Bruce Edgerton'
+                          || ''
     const coAddress     = (ts.remit_address && ts.remit_address.trim())
-                          || 'N4202 Hill Rd - Bonduel WI 54107'
+                          || ''
     const coMc          = (ts.mc_number && String(ts.mc_number).trim())
                           ? 'MC#' + String(ts.mc_number).trim()
-                          : 'MC#699644'
+                          : ''
     const coDot         = (ts.dot_number && String(ts.dot_number).trim())
                           ? 'DOT#' + String(ts.dot_number).trim()
                           : ''
     const coContactLine = (ts.support_email && ts.support_email.trim())
-                          || 'bruce.edgerton@yahoo.com - 715-509-0114'
+                          || ''
     const coSignature   = (ts.legal_name && ts.legal_name.trim())
                           || (ts.display_name && ts.display_name.trim())
-                          || 'Bruce Edgerton'
+                          || ''
 
     const base_pay  = parseFloat(data.base_pay)  || 0
     const detention = parseFloat(data.detention) || 0
