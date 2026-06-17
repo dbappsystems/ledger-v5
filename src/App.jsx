@@ -424,7 +424,7 @@ export default function App() {
 
             {(loadsSubView === 'list' || isBookkeeper) && (
               <div style={{ flex:1, overflowY:'auto' }}>
-                <Loads loads={loads} setLoads={setLoads} driver={driver} showToast={showToast} fetchLoads={fetchLoads} />
+                <Loads loads={loads} setLoads={setLoads} driver={driver} showToast={showToast} fetchLoads={fetchLoads} tenantSettings={tenantSettings} />
               </div>
             )}
 
