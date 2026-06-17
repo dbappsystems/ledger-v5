@@ -35,13 +35,20 @@ ALTER TABLE tenants ADD COLUMN remit_address  TEXT NOT NULL DEFAULT '';
 ALTER TABLE tenants ADD COLUMN remit_email    TEXT NOT NULL DEFAULT '';
 
 -- Seed the existing default tenant (Bruce/Tim's data) with their CURRENT real
--- values so nothing changes for them at cutover. New tenants get blanks they
--- fill in themselves at signup.
+-- values so nothing changes for them at cutover. These values previously lived
+-- ONLY as hardcoded fallbacks in Invoice.jsx/Loads.jsx; moving them into the
+-- tenant row is the correct home (tenant-owned data, not shared source) and lets
+-- the code fallbacks go neutral/blank. New tenants get blanks they fill in at
+-- signup. NOTE: support_email also carries the remit contact line (email +
+-- phone) until a dedicated remit_contact/remit_phone column is added.
 UPDATE tenants
    SET driver_split_pct = 10,
        display_name     = 'Edgerton Truck and Trailer',
        legal_name       = 'Edgerton Truck and Trailer',
-       support_email    = ''
+       remit_address    = 'N4202 Hill Rd - Bonduel WI 54107',
+       mc_number        = '699644',
+       dot_number       = '',
+       support_email    = 'bruce.edgerton@yahoo.com - 715-509-0114'
  WHERE id = '00000000-0000-0000-0000-000000000001';
 
 -- ============================================================================
