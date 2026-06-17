@@ -6,9 +6,10 @@
 // `api` prop and no longer forwards it to SettlementReport / BrokerDirectory
 // (both now use the token api() client). Threads ownerCutPct into SettlementReport.
 //
-// WHITE-LABEL TODO: the billing report hardcodes two drivers named BRUCE/TIM
-// (buildDriverStats calls + the two DriverBillingCard renders). Must be driven by
-// the tenant's own driver list.
+// WHITE-LABEL: the billing report iterates the tenant's own drivers via
+// useDrivers() (GET /api/drivers, falls back to the seeded BRUCE/TIM). Per-driver
+// stats, combined totals, and the driver cards are all built from that list — no
+// hardcoded driver names or colors. buildDriverStats math is unchanged.
 //
 // 2026-06-11: RATE CON CHRONOLOGY — billing report period filters key loads by
 //             DELIVERY DATE. parseAppDate() handles MM/DD/YYYY, M/D/YYYY, MM/DD/YY
@@ -17,6 +18,7 @@
 import { useState } from 'react'
 import BrokerDirectory  from './BrokerDirectory.jsx'
 import SettlementReport from './SettlementReport.jsx'
+import { useDrivers }   from './useDrivers.js'
 
 // Parse any date format that exists in this app's data into a Date at
 // local noon (prevents UTC midnight rolling back a day in Central time).
@@ -118,16 +120,24 @@ export default function BookkeeperProfile({ loads, showToast, ownerCutPct = 10 }
   const [period,  setPeriod]  = useState('monthly')
   const [offset,  setOffset]  = useState(0)
 
+  // WHITE-LABEL: the tenant's own drivers (names + colors), replacing the old
+  // hardcoded BRUCE/TIM pair. Falls back to the seeded identities if /api/drivers
+  // is unavailable, so the live client is unchanged.
+  const { drivers } = useDrivers()
+
   function changePeriod(p) { setPeriod(p); setOffset(0) }
 
-  // WHITE-LABEL TODO: hardcoded two-driver billing — should iterate tenant drivers.
-  const bruceStats = buildDriverStats(loads, 'BRUCE', period, offset)
-  const timStats   = buildDriverStats(loads, 'TIM',   period, offset)
+  // Per-driver billing stats, one entry per tenant driver. buildDriverStats math
+  // is unchanged — only the driver list is now dynamic.
+  const driverRows = drivers.map(d => ({
+    driver: d,
+    stats: buildDriverStats(loads, d.name, period, offset),
+  }))
 
-  const combinedCount       = bruceStats.count       + timStats.count
-  const combinedBilled      = bruceStats.totalBilled  + timStats.totalBilled
-  const combinedPaid        = bruceStats.totalPaid    + timStats.totalPaid
-  const combinedOutstanding = bruceStats.outstanding  + timStats.outstanding
+  const combinedCount       = driverRows.reduce((s, r) => s + r.stats.count,       0)
+  const combinedBilled      = driverRows.reduce((s, r) => s + r.stats.totalBilled,  0)
+  const combinedPaid        = driverRows.reduce((s, r) => s + r.stats.totalPaid,    0)
+  const combinedOutstanding = driverRows.reduce((s, r) => s + r.stats.outstanding,  0)
 
   const navBtn = {
     padding:'6px 18px', borderRadius:8, border:'1px solid var(--border)',
@@ -190,9 +200,10 @@ export default function BookkeeperProfile({ loads, showToast, ownerCutPct = 10 }
               <StatBox label="OUTSTANDING" value={fmt(combinedOutstanding)} color="var(--red)"   />
             </div>
           </div>
-          {/* WHITE-LABEL TODO: hardcoded BRUCE/TIM driver cards */}
-          <DriverBillingCard stats={bruceStats} driverName="BRUCE" color="#1e88e5" />
-          <DriverBillingCard stats={timStats}   driverName="TIM"   color="#e53935" />
+          {/* WHITE-LABEL: one card per tenant driver, each in its own color */}
+          {driverRows.map(r => (
+            <DriverBillingCard key={r.driver.name} stats={r.stats} driverName={r.driver.name} color={r.driver.color} />
+          ))}
           {combinedCount === 0 && (
             <div style={{ textAlign:'center', padding:32, color:'var(--grey)', fontSize:13 }}>No loads found for this period</div>
           )}
