@@ -5,11 +5,14 @@
 // AUTH MIGRATION: fuel + maintenance + (conditional) escrow fetches now go
 // through the token api() client. The `api` URL prop is gone.
 //
-// WHITE-LABEL TODO: STATE_RATES is keyed by the hardcoded driver names
-// BRUCE/TIM (Wisconsin/Illinois). Per-driver state tax rate is legitimate
-// business data, but it must be keyed off the tenant's own drivers / a
-// per-driver state setting, not two fixed names. Likewise the escrow/payback
-// dataset is fetched only for the hardcoded driver 'TIM'.
+// WHITE-LABEL (state tax DONE): per-driver state income tax now comes from the
+// tenant's own driver records (drivers.state_label / state_rate, migration 0003)
+// via useDrivers().taxInfoFor(driver), replacing the old hardcoded
+// STATE_RATES{TIM,BRUCE} table. A driver with no rate set falls back to the
+// tenant owner-operator's state. Per-driver color likewise comes from
+// useDrivers().colorFor(). REMAINING white-label item: the escrow/payback
+// dataset below is still fetched only for the hardcoded driver 'TIM' (the
+// Edgerton ETTR financing tracker) — out of scope for this change.
 //
 // 2026-06-11: robust date parsing — delivery_date is stored as MM/DD/YYYY,
 //             M/D/YYYY, or MM/DD/YY from the rate con scanner, while fuel
@@ -28,6 +31,7 @@
 
 import { useState, useEffect } from 'react'
 import { api as apiClient } from './api.js'
+import { useDrivers } from './useDrivers.js'
 
 const YEAR = 2026
 
@@ -45,12 +49,6 @@ const QUARTERS = [
 ]
 
 const FED_DEFAULT = 12
-
-// WHITE-LABEL TODO: keyed by hardcoded driver names. Move to per-driver setting.
-const STATE_RATES = {
-  TIM:   { rate:0.0495, label:'Illinois',  default:4.95 },
-  BRUCE: { rate:0.0530, label:'Wisconsin', default:5.30 },
-}
 
 const EXPENSE_CATEGORIES = [
   {
@@ -197,8 +195,21 @@ function inQuarter(dateStr, qMonths) {
 
 export default function Tax({ loads, driver }) {
 
-  const stateInfo   = STATE_RATES[driver] || STATE_RATES.TIM
-  const driverColor = driver === 'BRUCE' ? '#1e88e5' : '#e53935'
+  // White-label: per-driver state tax + color come from the tenant's own driver
+  // records (migration 0003) via the shared hook, replacing the old hardcoded
+  // STATE_RATES{TIM,BRUCE} table and the BRUCE/TIM color ternary. taxInfoFor()
+  // returns this driver's { state_label, state_rate }, falling back to the
+  // tenant owner-operator's state when this driver has no rate set. We reshape
+  // it into the { rate, label, default } object the rest of this file already
+  // expects, so the tax MATH below is completely unchanged.
+  const { colorFor, taxInfoFor } = useDrivers()
+  const taxInfo     = taxInfoFor(driver)
+  const stateInfo   = {
+    rate:    taxInfo.state_rate,                 // fraction, e.g. 0.0530
+    label:   taxInfo.state_label || 'No state set',
+    default: Math.round(taxInfo.state_rate * 10000) / 100,  // whole-number %, e.g. 5.30
+  }
+  const driverColor = colorFor(driver)
 
   const [taxData,       setTaxData]       = useState(() => loadStorage(driver))
   const [fedRate,       setFedRate]       = useState(FED_DEFAULT)
