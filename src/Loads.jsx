@@ -9,11 +9,14 @@
 // WORKER TODO: /api/invoice/:id GET must also accept ?t=<token> (a plain <a>
 //   link can't send the Authorization header) and resolve the tenant from it.
 //
-// WHITE-LABEL TODO (dedicated task): this file hardcodes a TWO-DRIVER model
-//   named BRUCE/TIM — the leaderboard, the ALL/BRUCE/TIM filter tabs, per-driver
-//   card colors, and a TIM-only ACH rule. For real white-label these must be
-//   driven by the tenant's OWN driver list, not two fixed names.
-//   DONE: generateCorrectedPDF() carrier identity now comes from tenantSettings
+// WHITE-LABEL (DONE): this file no longer hardcodes a two-driver BRUCE/TIM
+//   model. The filter tabs, the all-time leaderboard, and per-driver card
+//   colors are now driven by the tenant's OWN driver list via useDrivers()
+//   (arbitrary length). colorFor(name) supplies each driver's color; names/
+//   drivers supply the tabs and leaderboard rows. The ACH (⚡) action is now
+//   available on every unpaid load (the old TIM-only name gate is removed) —
+//   per-tenant decision: always-on, no name check.
+//   generateCorrectedPDF() carrier identity comes from tenantSettings
 //   (display_name, legal_name, remit_address, mc_number, dot_number,
 //   support_email), identical to Invoice.jsx, with NEUTRAL/blank fallbacks
 //   only. The corrected-invoice filename is neutral ('CORRECTED-Invoice-').
@@ -24,6 +27,7 @@
 import { useState, useEffect } from 'react'
 import { jsPDF } from 'jspdf'
 import { api as apiClient, apiUrl, getToken } from './api.js'
+import { useDrivers } from './useDrivers.js'
 
 // Safely turn a D1 column that may be an array, a JSON string, null, or ''
 // into a real array. Never throws.
@@ -40,6 +44,21 @@ function asArray(val) {
     }
   }
   return []
+}
+
+// Darken a #rrggbb hex by a factor (0..1) for the card header background.
+// Replaces the old hardcoded navy(#1A3A5C)/maroon(#2a0a0a) per-driver headers
+// with a deterministic dark shade derived from each driver's own color, so an
+// N-driver tenant gets consistent headers without any name matching. Falls back
+// to a neutral dark slate if the input isn't a valid hex.
+function darkenHex(hex, factor = 0.28) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim())
+  if (!m) return '#1A3A5C'
+  const n = parseInt(m[1], 16)
+  const r = Math.round(((n >> 16) & 255) * factor)
+  const g = Math.round(((n >> 8) & 255) * factor)
+  const b = Math.round((n & 255) * factor)
+  return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')
 }
 
 // Parse any date format that exists in this app's data into a Date at
@@ -68,6 +87,10 @@ function parseAppDate(dateStr) {
 }
 
 export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, tenantSettings }) {
+
+  // White-label driver source: tabs, leaderboard, and colors all read from the
+  // tenant's own driver list (falls back to seeded BRUCE/TIM if unavailable).
+  const { names: driverNames, colorFor } = useDrivers()
 
   const [view,          setView]          = useState('all')
   const [confirmDelete, setConfirmDelete] = useState(null)
@@ -333,15 +356,27 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
   }
 
   // ── COMPUTED ──────────────────────────────────────────────
-  const bruceLoads        = loads.filter(l => l.driver === 'BRUCE')
-  const timLoads          = loads.filter(l => l.driver === 'TIM')
-  const bruceTotalAllTime = bruceLoads.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
-  const timTotalAllTime   = timLoads.reduce((s,l)   => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
-  const grandTotal        = bruceTotalAllTime + timTotalAllTime
-  const brucePercent      = grandTotal > 0 ? Math.round((bruceTotalAllTime/grandTotal)*100) : 50
-  const timPercent        = 100 - brucePercent
-  const leader            = bruceTotalAllTime > timTotalAllTime ? 'BRUCE' : timTotalAllTime > bruceTotalAllTime ? 'TIM' : 'TIE'
-  const filteredLoads     = view === 'BRUCE' ? bruceLoads : view === 'TIM' ? timLoads : loads
+  // WHITE-LABEL LEADERBOARD (N drivers): build one row per tenant driver from
+  // useDrivers().names, totaling each driver's all-time net. The old two-driver
+  // bruceLoads/timLoads/percent/crown block is gone. Money math is untouched —
+  // these are display totals over load.netPay/net_pay only. Each driver also
+  // gets a "share" percent of the grand total for the stacked bar, and the top
+  // earner gets the crown / "IS WINNING!" banner (ties get no crown).
+  const leaderboard = driverNames.map(name => {
+    const dLoads = loads.filter(l => l.driver === name)
+    const total  = dLoads.reduce((s,l) => s + (parseFloat(l.netPay||l.net_pay)||0), 0)
+    return { name, color: colorFor(name), count: dLoads.length, total }
+  })
+  const grandTotal = leaderboard.reduce((s,d) => s + d.total, 0)
+  const rankedBoard = [...leaderboard].sort((a,b) => b.total - a.total)
+  const topTotal    = rankedBoard.length ? rankedBoard[0].total : 0
+  // A driver "leads" only if they are the unique maximum (> 0). Ties => no crown.
+  const leadersAtTop = rankedBoard.filter(d => d.total === topTotal && topTotal > 0)
+  const leaderName   = leadersAtTop.length === 1 ? leadersAtTop[0].name : null
+
+  // Filtered loads honor the active tab. 'all' = every load; otherwise the
+  // selected driver name (which comes from driverNames, so it generalizes).
+  const filteredLoads = view === 'all' ? loads : loads.filter(l => l.driver === view)
   // Display in rate con chronology — newest delivery first.
   // Sort a copy: loads.indexOf(load) below still resolves against the
   // original array, so edit/delete/ACH actions are unaffected.
@@ -367,11 +402,14 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
   }
 
   // ── RENDER ────────────────────────────────────────────────
+  // Tabs: ALL + one per tenant driver. gridTemplateColumns uses repeat() so the
+  // row adapts to however many drivers the tenant has (not a fixed 1fr 1fr 1fr).
+  const tabValues = ['all', ...driverNames]
   return (
     <div>
-      {/* Filter tabs — ALL / BRUCE / TIM */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:6, marginBottom:14 }}>
-        {['all','BRUCE','TIM'].map(v => (
+      {/* Filter tabs — ALL + one per tenant driver */}
+      <div style={{ display:'grid', gridTemplateColumns:`repeat(${tabValues.length}, 1fr)`, gap:6, marginBottom:14 }}>
+        {tabValues.map(v => (
           <button key={v} onClick={() => setView(v)} style={{
             padding:'9px 4px', borderRadius:8, border:'none',
             fontFamily:'var(--font-head)', fontWeight:700, fontSize:12,
@@ -382,27 +420,28 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
         ))}
       </div>
 
-      {/* Leaderboard */}
+      {/* Leaderboard — one row per tenant driver, top earner crowned */}
       <div className="card" style={{ marginBottom:14 }}>
         <div className="section-title" style={{ marginBottom:10 }}>
           LEADERBOARD - ALL TIME
-          {leader !== 'TIE' && <span style={{ marginLeft:8, fontSize:12, color:'var(--amber)' }}>{leader} IS WINNING!</span>}
+          {leaderName && <span style={{ marginLeft:8, fontSize:12, color:'var(--amber)' }}>{leaderName} IS WINNING!</span>}
         </div>
-        <div style={{ display:'flex', height:18, borderRadius:9, overflow:'hidden', marginBottom:10 }}>
-          <div style={{ width:brucePercent+'%', background:'#1e88e5', transition:'width 0.4s' }} />
-          <div style={{ width:timPercent+'%',   background:'#e53935', transition:'width 0.4s' }} />
+        {/* Stacked share bar — one segment per driver, colored by colorFor */}
+        <div style={{ display:'flex', height:18, borderRadius:9, overflow:'hidden', marginBottom:10, background:'var(--navy3)' }}>
+          {leaderboard.map(d => {
+            const pct = grandTotal > 0 ? (d.total / grandTotal) * 100 : (100 / (leaderboard.length || 1))
+            return <div key={d.name} style={{ width:pct+'%', background:d.color, transition:'width 0.4s' }} />
+          })}
         </div>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
-          <div style={{ background:'var(--navy3)', borderRadius:8, padding:'10px 12px', borderLeft:'3px solid #1e88e5' }}>
-            <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:4 }}>BRUCE {leader==='BRUCE'?'👑':''}</div>
-            <div style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, color:'#1e88e5' }}>{fmt(bruceTotalAllTime)}</div>
-            <div style={{ fontSize:11, color:'var(--grey)', marginTop:2 }}>{bruceLoads.length} load{bruceLoads.length!==1?'s':''}</div>
-          </div>
-          <div style={{ background:'var(--navy3)', borderRadius:8, padding:'10px 12px', borderLeft:'3px solid #e53935' }}>
-            <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:4 }}>TIM {leader==='TIM'?'👑':''}</div>
-            <div style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, color:'#e53935' }}>{fmt(timTotalAllTime)}</div>
-            <div style={{ fontSize:11, color:'var(--grey)', marginTop:2 }}>{timLoads.length} load{timLoads.length!==1?'s':''}</div>
-          </div>
+        {/* Driver totals — responsive grid, up to 2 per row */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 1fr)', gap:10 }}>
+          {leaderboard.map(d => (
+            <div key={d.name} style={{ background:'var(--navy3)', borderRadius:8, padding:'10px 12px', borderLeft:'3px solid '+d.color }}>
+              <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:4 }}>{d.name} {leaderName===d.name?'👑':''}</div>
+              <div style={{ fontFamily:'var(--font-head)', fontSize:20, fontWeight:900, color:d.color }}>{fmt(d.total)}</div>
+              <div style={{ fontSize:11, color:'var(--grey)', marginTop:2 }}>{d.count} load{d.count!==1?'s':''}</div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -447,12 +486,15 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
         const invHref     = invoiceHref(load)
         const achFee      = load.ach_payment ? Math.max(0, netPay - (parseFloat(load.ach_received)||0)) : 0
         const achPreviewFee = achReceivedAmt ? Math.max(0, netPay - (parseFloat(achReceivedAmt)||0)) : 0
+        // Per-driver colors from the tenant's own list (no name matching).
+        const driverColor = colorFor(load.driver)
+        const headerBg    = darkenHex(driverColor)
         return (
           <div key={load.id || idx} style={{ background:'var(--white)', borderRadius:10, marginBottom:14, overflow:'hidden', boxShadow:'0 2px 8px rgba(0,0,0,0.18)' }}>
             {/* Card header */}
-            <div style={{ background:load.driver==='BRUCE'?'#1A3A5C':'#2a0a0a', padding:'10px 14px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <div style={{ background:headerBg, padding:'10px 14px', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
               <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                <div style={{ padding:'2px 8px', borderRadius:10, fontSize:10, fontFamily:'var(--font-head)', fontWeight:700, background:load.driver==='BRUCE'?'#1e88e5':'#e53935', color:'#fff' }}>{load.driver||'-'}</div>
+                <div style={{ padding:'2px 8px', borderRadius:10, fontSize:10, fontFamily:'var(--font-head)', fontWeight:700, background:driverColor, color:'#fff' }}>{load.driver||'-'}</div>
                 <div style={{ fontSize:18, fontFamily:'var(--font-head)', fontWeight:900, color:'#fff', letterSpacing:'0.04em' }}>#{load.load_number||'-'}</div>
               </div>
               <div style={{ display:'flex', alignItems:'center', gap:8 }}>
@@ -515,7 +557,9 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
                 {load.status !== 'paid' && (
                   <button className="scan-btn success" style={{ flex:1, padding:'8px 12px', fontSize:12 }} disabled={updating===loadId} onClick={() => { setShowAchPanel(null); setAchReceivedAmt(''); patchLoad(load,localIdx,{status:'paid'}) }}>{updating===loadId?'...':'MARK PAID'}</button>
                 )}
-                {load.driver === 'TIM' && load.status !== 'paid' && (
+                {/* ACH (⚡) is available on every unpaid load — white-label: no
+                    per-driver name gate. Per-tenant decision: always-on. */}
+                {load.status !== 'paid' && (
                   <button onClick={() => {
                     if (isAchPanel) { setShowAchPanel(null); setAchReceivedAmt('') }
                     else { setShowAchPanel(localIdx); setAchReceivedAmt('') }
