@@ -9,9 +9,9 @@
 // — now comes from the tenant's own settings (display_name, legal_name,
 // remit_address, mc_number, dot_number, support_email, slug from migration 0002),
 // passed in as the tenantSettings prop and resolved from the session token by the
-// worker. Edgerton values remain ONLY as last-resort fallbacks if a field is blank;
-// the live tenant row is seeded with real values so the invoice is unchanged at
-// cutover. FLAG: 0002 has no dedicated phone or signature-name column — phone is
+// worker. Fallbacks are NEUTRAL/blank — no client's data lives in code; each
+// tenant's real values live in its own row (migration 0002 seeds the default
+// tenant). FLAG: 0002 has no dedicated phone or signature-name column — phone is
 // currently part of the contact line, and the signature reuses the company name.
 // Add remit_phone / remit_contact columns if a per-person signature is wanted.
 
@@ -48,35 +48,37 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
   // ── WHITE-LABEL CARRIER IDENTITY ─────────────────────────
   // Every value comes from the tenant's own settings (migration 0002), resolved
   // from the session token by the worker and passed down from App as
-  // tenantSettings. Fallbacks keep Edgerton's invoice byte-for-byte unchanged if
-  // a field is blank, but the live tenant row is already seeded with real values
-  // so nothing here is Edgerton-specific in code anymore.
-  //   NOTE: 0002 has no phone or signature-name column yet. Phone is folded into
-  //   the contact line only if a tenant adds it to support_email-adjacent data
-  //   later; for now the signature uses display_name/legal_name. Flagged so a
-  //   dedicated remit_contact/remit_phone field can be added when needed.
+  // tenantSettings. Fallbacks are now NEUTRAL/blank — no client's data lives in
+  // code. Each tenant's real invoice identity (name, address, MC/DOT, contact)
+  // lives in its own tenant row (migration 0002 seeds the default tenant; new
+  // tenants fill these in at signup). A blank field renders blank, never another
+  // company's info.
+  //   NOTE: 0002 has no dedicated phone or signature-name column yet. Phone is
+  //   folded into support_email's contact line by the tenant; the signature uses
+  //   legal_name/display_name. Flagged so a dedicated remit_contact/remit_phone
+  //   field can be added when needed.
   const ts            = tenantSettings || {}
   const coName        = (ts.display_name && ts.display_name.trim())
                         || (ts.legal_name && ts.legal_name.trim())
-                        || 'Edgerton Truck & Trailer Repair'
+                        || ''
   const coLegalName   = (ts.legal_name && ts.legal_name.trim())
                         || (ts.display_name && ts.display_name.trim())
-                        || 'Bruce Edgerton'
+                        || ''
   const coAddress     = (ts.remit_address && ts.remit_address.trim())
-                        || 'N4202 Hill Rd - Bonduel WI 54107'
+                        || ''
   const coMc          = (ts.mc_number && String(ts.mc_number).trim())
                         ? 'MC#' + String(ts.mc_number).trim()
-                        : 'MC#699644'
+                        : ''
   const coDot         = (ts.dot_number && String(ts.dot_number).trim())
                         ? 'DOT#' + String(ts.dot_number).trim()
                         : ''
   const coContactLine = (ts.support_email && ts.support_email.trim())
-                        || 'bruce.edgerton@yahoo.com - 715-509-0114'
+                        || ''
   // Signature: a person/company sign-off. No dedicated column yet -> use the
-  // company legal/display name, falling back to the historical Edgerton signature.
+  // company legal/display name; blank if the tenant hasn't set one.
   const coSignature   = (ts.legal_name && ts.legal_name.trim())
                         || (ts.display_name && ts.display_name.trim())
-                        || 'Bruce Edgerton'
+                        || ''
   // Filename prefix: tenant slug if present, else neutral 'Invoice'.
   const filePrefix    = (ts.slug && ts.slug.trim()) ? ts.slug.trim() : 'Invoice'
 
