@@ -1,22 +1,35 @@
 // src/settlementMath.js
 // (c) dbappsystems.com | daddyboyapps.com
-// Load Ledger V4 — SHARED SETTLEMENT MATH — single source of truth
-// 2026-06-12: extracted from SettlementReport.jsx so SettlementReport.jsx
-//             and Maintenance.jsx compute the running balance with ONE
-//             formula. Behavior identical to the 2026-06-11e code.
+// Load Ledger V5 — SHARED SETTLEMENT MATH — single source of truth
 //
-// ACCOUNTING MODEL — v2:
-// "Still Owed to TIM" is a RUNNING BALANCE (all-time cumulative).
-// It uses every load, every fuel entry, every ACH payment, every escrow
-// payment ever recorded. Not period-filtered. Never resets.
-// A load's accounting date is its DELIVERY DATE (rate con chronology).
+// WHITE-LABEL: no hardcoded names, no hardcoded split.
+//   * The owner's cut comes from the TENANT SETTING (driver_split_pct, 1..50),
+//     passed in as `ownerCutPct` (a fraction 0.01..0.50). Default 0.10 only as
+//     a safety fallback if a caller forgets to pass it.
+//   * "Owner-operator" loads (driver keeps 100%, no split) are flagged per-load
+//     via load.is_owner_operator instead of matching a hardcoded name like BRUCE.
+//
+// ACCOUNTING MODEL (unchanged from v4 behavior):
+//   "Still owed to the company" is an all-time RUNNING BALANCE. Uses every load,
+//   fuel entry, ACH payment, and escrow payment. Not period-filtered, never
+//   resets. A load's accounting date is its DELIVERY DATE.
 
-// -- CONSTANTS — DO NOT CHANGE -----------------------------------------
-export const BRUCE_CUT = 0.10
-export const TIM_CUT   = 0.90
+// -- SPLIT HELPERS (replaces hardcoded BRUCE_CUT / TIM_CUT) -------------------
+// ownerCutPct is a fraction: 0.10 means the company keeps 10%, driver nets 90%.
+const DEFAULT_OWNER_CUT = 0.10; // fallback ONLY; real value comes from tenant.
 
-// Safely turn a D1 column that may be an array, a JSON string, null, or ''
-// into a real array. Never throws.
+export function normalizeOwnerCut(pctMaybeWhole) {
+  // Accept either a fraction (0.10) or a whole number (10) and clamp to 1%..50%.
+  if (pctMaybeWhole == null || isNaN(pctMaybeWhole)) return DEFAULT_OWNER_CUT;
+  let f = Number(pctMaybeWhole);
+  if (f > 1) f = f / 100;            // 10 -> 0.10
+  if (f < 0.01) f = 0.01;            // floor 1%
+  if (f > 0.50) f = 0.50;            // ceiling 50%
+  return f;
+}
+
+// Safely turn a D1 column that may be an array, JSON string, null, or '' into
+// a real array. Never throws.
 export function asArray(val) {
   if (Array.isArray(val)) return val
   if (typeof val === 'string') {
@@ -32,18 +45,15 @@ export function asArray(val) {
   return []
 }
 
-// Parse any date format that exists in this app's data into a Date at
-// local noon (prevents UTC midnight rolling back a day in Central time).
-// Handles: YYYY-MM-DD | MM/DD/YYYY | M/D/YYYY | MM/DD/YY. Never throws.
+// Parse any date format in this app's data into a Date at local noon (prevents
+// UTC midnight rolling back a day in Central time). Never throws.
 export function parseAppDate(dateStr) {
   if (!dateStr || typeof dateStr !== 'string') return null
   const s = dateStr.trim()
-  // ISO: YYYY-MM-DD (with or without trailing time)
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
     const d = new Date(s.substring(0,10) + 'T12:00:00')
     return isNaN(d.getTime()) ? null : d
   }
-  // US: M/D/YY or MM/DD/YYYY etc.
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
   if (m) {
     const month = parseInt(m[1], 10)
@@ -57,9 +67,8 @@ export function parseAppDate(dateStr) {
   return null
 }
 
-// -- LOAD HELPERS — DO NOT CHANGE --------------------------------------
+// -- LOAD HELPERS ------------------------------------------------------------
 // RATE CON CHRONOLOGY: a load's accounting date is its DELIVERY DATE.
-// created_at (entry date) is only a last-resort fallback.
 export function loadDate(load) { return load.delivery_date || load.date || load.created_at || null }
 
 export function getLoadTotals(load) {
@@ -75,11 +84,20 @@ export function getLoadTotals(load) {
   return { comdataTotal, lumperTotal, incTotal }
 }
 
-export function calcPay(load) {
+// calcPay now takes the owner cut as a parameter (from the tenant setting).
+//   ownerCutPct: fraction the COMPANY keeps (e.g. 0.10).
+//   An owner-operator load (load.is_owner_operator truthy) keeps 100%: the
+//   driver nets the full base and the company cut is reported as 0 for that load
+//   — same effect the old code achieved by checking `driver === 'BRUCE'`, but
+//   now driven by per-load data instead of a hardcoded name.
+export function calcPay(load, ownerCutPct = DEFAULT_OWNER_CUT) {
+  const cut       = normalizeOwnerCut(ownerCutPct)
   const base      = parseFloat(load.base_pay) || 0
   const detention = parseFloat(load.detention) || 0
-  if (load.driver === 'BRUCE') return { gross: base, ownerCut: base * BRUCE_CUT, driverNet: base }
-  return { gross: base, ownerCut: base * BRUCE_CUT, driverNet: (base * TIM_CUT) + detention }
+  if (load.is_owner_operator) {
+    return { gross: base, ownerCut: 0, driverNet: base }
+  }
+  return { gross: base, ownerCut: base * cut, driverNet: (base * (1 - cut)) + detention }
 }
 
 export function advanceKept(load) {
@@ -92,15 +110,15 @@ export function reimbursementOwed(load) {
   return Math.max(0, (lumperTotal + incTotal) - comdataTotal)
 }
 
-// -- RUNNING BALANCE — all-time, the ONE formula ------------------------
-// The true "what does Bruce owe Tim right now" number.
-// stillOwedRaw is the signed balance (spec: can cross zero).
-// stillOwed keeps the Math.max(0, ...) display cap — unchanged behavior.
-export function computeRunningBalance({ loads, fuelEntries, escrowTotal, driver }) {
+// -- RUNNING BALANCE — all-time, the ONE formula -----------------------------
+// Now takes ownerCutPct from the tenant. Behavior identical to v4 when
+// ownerCutPct = 0.10 and no loads are flagged owner-operator.
+export function computeRunningBalance({ loads, fuelEntries, escrowTotal, driver, ownerCutPct = DEFAULT_OWNER_CUT }) {
+  const cut    = normalizeOwnerCut(ownerCutPct)
   const dn     = driver
   const dLoads = (Array.isArray(loads) ? loads : []).filter(l => l.driver === dn)
   const fuel   = Array.isArray(fuelEntries) ? fuelEntries : []
-  const allGrossPay     = dLoads.reduce((s,l) => s + calcPay(l).driverNet, 0)
+  const allGrossPay     = dLoads.reduce((s,l) => s + calcPay(l, cut).driverNet, 0)
   const allAdvKept      = dLoads.reduce((s,l) => s + advanceKept(l), 0)
   const allReimb        = dLoads.reduce((s,l) => s + reimbursementOwed(l), 0)
   const allFleetFuel    = fuel.filter(f => f.driver === dn.toUpperCase() && f.fuel_type === 'fleet').reduce((s,f) => s+(parseFloat(f.amount)||0), 0)
@@ -110,7 +128,7 @@ export function computeRunningBalance({ loads, fuelEntries, escrowTotal, driver 
   return {
     allGrossPay, allAdvKept, allReimb, allFleetFuel, allAchDisbursed, allEscrow,
     allDetention: dLoads.reduce((s,l) => s+(parseFloat(l.detention)||0), 0),
-    allGross90: dLoads.reduce((s,l) => s+(parseFloat(l.base_pay)||0)*TIM_CUT, 0),
+    allGrossCompanyShare: dLoads.reduce((s,l) => s+(parseFloat(l.base_pay)||0)*(1 - cut), 0),
     stillOwedRaw,
     stillOwed: Math.max(0, stillOwedRaw),
   }
