@@ -10,10 +10,12 @@
 // identical to v4 (base*TIM_CUT 0.90) at the default 10% split. App.jsx passes
 // ownerCutPct from tenant settings; default 10 keeps Edgerton unchanged.
 //
-// WHITE-LABEL TODO: fuel is fetched for the two hardcoded drivers TIM & BRUCE;
-// driversToShow is ['BRUCE','TIM']; per-driver colors and the TIM-only escrow
-// logic assume the two-driver model; the statement overlay hardcodes the company
-// name "Edgerton Truck & Trailer Repair". All must become tenant/driver-driven.
+// WHITE-LABEL: driver list, per-driver colors, fuel/advance fetches, and the
+// statement header color are all driven by the tenant's drivers via useDrivers()
+// (falls back to the seeded BRUCE/TIM). Escrow stays TIM-specific — it's the
+// Edgerton ETTR financing tracker, a client-specific concern out of scope here.
+// The statement overlay still hardcodes the company name "Edgerton Truck &
+// Trailer Repair"; that becomes tenant branding in a later pass.
 //
 // ACCOUNTING MODEL: "Still Owed" is an all-time RUNNING BALANCE (not period-reset).
 // Period filters control which activity rows display; the bottom-line balance is
@@ -21,6 +23,7 @@
 
 import { useState, useRef } from 'react'
 import { api as apiClient } from './api.js'
+import { useDrivers } from './useDrivers.js'
 import {
   normalizeOwnerCut, asArray, parseAppDate, loadDate,
   getLoadTotals, calcPay, advanceKept, reimbursementOwed,
@@ -304,7 +307,7 @@ function toBase64(file) {
 }
 
 // -- FULL STATEMENT OVERLAY --------------------------------------------
-function StatementOverlay({ data, driverName, onClose }) {
+function StatementOverlay({ data, driverName, headerColor, onClose }) {
   const d = data
   const TH  = { background:'#1a2a3a', color:'#fff', padding:'8px 10px', fontSize:11, fontWeight:700, textAlign:'left', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }
   const TD  = { padding:'8px 10px', fontSize:12, borderBottom:'1px solid #e8e8e8', color:'#222', verticalAlign:'middle' }
@@ -316,7 +319,7 @@ function StatementOverlay({ data, driverName, onClose }) {
       <div style={{ position:'sticky', top:0, background:'#1a2a3a', padding:'12px 16px', display:'flex', alignItems:'center', justifyContent:'space-between', zIndex:10 }}>
         <div>
           <div style={{ fontSize:11, color:'rgba(255,255,255,0.6)', fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>SETTLEMENT STATEMENT</div>
-          <div style={{ fontSize:16, fontFamily:'var(--font-head)', fontWeight:900, color: driverName==='TIM'?'#ff6b6b':'#64b5f6' }}>{driverName}</div>
+          <div style={{ fontSize:16, fontFamily:'var(--font-head)', fontWeight:900, color: headerColor || '#64b5f6' }}>{driverName}</div>
           <div style={{ fontSize:10, color:'rgba(255,255,255,0.5)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginTop:2 }}>PERIOD ACTIVITY: {d.periodLabel}</div>
         </div>
         <button onClick={onClose} style={{ background:'rgba(255,255,255,0.15)', border:'none', color:'#fff', borderRadius:8, padding:'8px 16px', fontSize:14, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>X CLOSE</button>
@@ -647,36 +650,33 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
   const [advNotes,        setAdvNotes]        = useState('')
   const [advSaving,       setAdvSaving]       = useState(false)
 
+  // WHITE-LABEL: the tenant's own drivers + colors (see render section). Hook
+  // lives here with the other hooks to satisfy React's rules-of-hooks ordering.
+  const { names: driverNames, colorFor } = useDrivers()
+
   async function loadData() {
     if (loaded || loading) return
     setLoading(true)
     try {
-      // WHITE-LABEL TODO: fuel + carrier advances fetched for the two hardcoded
-      // drivers TIM & BRUCE. Should iterate the tenant's actual driver list.
-      const tasks = [
-        apiClient('/api/fuel/TIM').catch(()=>[]),
-        apiClient('/api/fuel/BRUCE').catch(()=>[]),
-        apiClient('/api/carrier-advances/TIM').catch(()=>[]),
-        apiClient('/api/carrier-advances/BRUCE').catch(()=>[]),
-      ]
-      if (isBookkeeper || (!isBookkeeper && driverName !== 'BRUCE')) {
-        tasks.push(apiClient('/api/escrow-payments/TIM').catch(()=>[]))
-      }
-      const results = await Promise.all(tasks)
-      const timFuel   = results[0]
-      const bruceFuel = results[1]
-      const timAdv    = results[2]
-      const bruceAdv  = results[3]
-      setFuelEntries([
-        ...(Array.isArray(timFuel)   ? timFuel   : []),
-        ...(Array.isArray(bruceFuel) ? bruceFuel : []),
+      // WHITE-LABEL: fuel + carrier advances are fetched for every tenant driver
+      // (driverNames from useDrivers, which falls back to TIM/BRUCE). Escrow stays
+      // TIM-specific — it's the Edgerton ETTR financing tracker, out of scope here.
+      const fuelTasks = driverNames.map(dn => apiClient('/api/fuel/' + dn).catch(()=>[]))
+      const advTasks  = driverNames.map(dn => apiClient('/api/carrier-advances/' + dn).catch(()=>[]))
+      const escrowTask = (isBookkeeper || (!isBookkeeper && driverName !== 'BRUCE'))
+        ? apiClient('/api/escrow-payments/TIM').catch(()=>[])
+        : Promise.resolve(null)
+      const [fuelResults, advResults, escrowResult] = await Promise.all([
+        Promise.all(fuelTasks),
+        Promise.all(advTasks),
+        escrowTask,
       ])
-      setCarrierAdvances([
-        ...(Array.isArray(timAdv)   ? timAdv   : []),
-        ...(Array.isArray(bruceAdv) ? bruceAdv : []),
-      ])
-      if (results[4]) {
-        setEscrowPayments(Array.isArray(results[4]) ? results[4] : [])
+      const fuelFlat = fuelResults.flatMap(r => Array.isArray(r) ? r : [])
+      const advFlat  = advResults.flatMap(r => Array.isArray(r) ? r : [])
+      setFuelEntries(fuelFlat)
+      setCarrierAdvances(advFlat)
+      if (escrowResult) {
+        setEscrowPayments(Array.isArray(escrowResult) ? escrowResult : [])
       }
       setLoaded(true)
     } catch (err) {
@@ -689,27 +689,19 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
 
   async function refreshFuel() {
     try {
-      const [timFuel, bruceFuel] = await Promise.all([
-        apiClient('/api/fuel/TIM').catch(()=>[]),
-        apiClient('/api/fuel/BRUCE').catch(()=>[]),
-      ])
-      setFuelEntries([
-        ...(Array.isArray(timFuel)   ? timFuel   : []),
-        ...(Array.isArray(bruceFuel) ? bruceFuel : []),
-      ])
+      const results = await Promise.all(
+        driverNames.map(dn => apiClient('/api/fuel/' + dn).catch(()=>[]))
+      )
+      setFuelEntries(results.flatMap(r => Array.isArray(r) ? r : []))
     } catch {}
   }
 
   async function refreshAdvances() {
     try {
-      const [timAdv, bruceAdv] = await Promise.all([
-        apiClient('/api/carrier-advances/TIM').catch(()=>[]),
-        apiClient('/api/carrier-advances/BRUCE').catch(()=>[]),
-      ])
-      setCarrierAdvances([
-        ...(Array.isArray(timAdv)   ? timAdv   : []),
-        ...(Array.isArray(bruceAdv) ? bruceAdv : []),
-      ])
+      const results = await Promise.all(
+        driverNames.map(dn => apiClient('/api/carrier-advances/' + dn).catch(()=>[]))
+      )
+      setCarrierAdvances(results.flatMap(r => Array.isArray(r) ? r : []))
     } catch {}
   }
 
@@ -1023,8 +1015,9 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
     fontSize:14, fontFamily:'var(--font-body)', boxSizing:'border-box',
   }
 
-  // WHITE-LABEL TODO: hardcoded two-driver list — should come from the tenant's drivers.
-  const driversToShow = isBookkeeper ? ['BRUCE','TIM'] : [driverName]
+  // WHITE-LABEL: driver display list from the tenant's drivers (was hardcoded
+  // ['BRUCE','TIM']). Bookkeeper sees every tenant driver; a driver sees self.
+  const driversToShow = isBookkeeper ? driverNames : [driverName]
   const REASONS = ['repair','general','fuel','other']
 
   return (
@@ -1034,6 +1027,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
         <StatementOverlay
           data={buildSettlementData(showStatement)}
           driverName={showStatement}
+          headerColor={colorFor(showStatement)}
           onClose={() => setShowStatement(null)}
         />
       )}
@@ -1089,7 +1083,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
           {/* Driver settlement cards */}
           {driversToShow.map(dn => {
             const s     = driverStats(dn)
-            const color = dn === 'BRUCE' ? '#1e88e5' : '#e53935'
+            const color = colorFor(dn)
             const fuelList = fuelEntriesForPeriod(dn)
             const advList  = advancesForDriver(dn)
             return (
@@ -1228,8 +1222,8 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
                 <div style={{ marginBottom:12 }}>
                   <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>DRIVER</div>
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                    {['TIM','BRUCE'].map(d => (
-                      <button key={d} onClick={() => setFuelDriver(d)} style={{ padding:'10px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, background: fuelDriver===d?(d==='TIM'?'#e53935':'#1e88e5'):'var(--navy3)', color: fuelDriver===d?'#fff':'var(--grey)' }}>{d}</button>
+                    {driverNames.map(d => (
+                      <button key={d} onClick={() => setFuelDriver(d)} style={{ padding:'10px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, background: fuelDriver===d?colorFor(d):'var(--navy3)', color: fuelDriver===d?'#fff':'var(--grey)' }}>{d}</button>
                     ))}
                   </div>
                 </div>
@@ -1289,8 +1283,8 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
                 <div style={{ marginBottom:12 }}>
                   <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>DRIVER</div>
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                    {['TIM','BRUCE'].map(d => (
-                      <button key={d} onClick={() => setAdvDriver(d)} style={{ padding:'10px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, background: advDriver===d?(d==='TIM'?'#e53935':'#1e88e5'):'var(--navy3)', color: advDriver===d?'#fff':'var(--grey)' }}>{d}</button>
+                    {driverNames.map(d => (
+                      <button key={d} onClick={() => setAdvDriver(d)} style={{ padding:'10px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, background: advDriver===d?colorFor(d):'var(--navy3)', color: advDriver===d?'#fff':'var(--grey)' }}>{d}</button>
                     ))}
                   </div>
                 </div>
