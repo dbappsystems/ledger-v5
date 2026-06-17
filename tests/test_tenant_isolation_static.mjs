@@ -12,7 +12,8 @@
 //   2) Confirms public routes (login/logout/OPTIONS) appear BEFORE the gate,
 //      and that the gate (`await requireTenant`) sits above all data routes.
 //   3) For every DB statement, asserts it references tenant_id — except the
-//      auth-plumbing statements (sessions table + users-by-id/email/upgrade).
+//      auth-plumbing statements (sessions + users-by-id/email/upgrade) and the
+//      tenants table keyed by its own id (the tenant reading/writing its OWN row).
 //
 // RUN:  node tests/test_tenant_isolation_static.mjs worker/index.js
 //       (exit 0 = pass, 1 = fail)
@@ -62,7 +63,12 @@ while ((m = stmtRegex.exec(src)) !== null) {
   const usersByEmail    = /FROM USERS WHERE LOWER\(EMAIL\)/.test(upper);
   const usersUpgrade    = /UPDATE USERS SET PASSWORD=\?, SALT=\? WHERE ID=\?/.test(upper);
   const insertSession   = /INSERT INTO SESSIONS/.test(upper);
-  if (touchesSessions || usersById || usersByEmail || usersUpgrade || insertSession) continue;
+  // The tenants table IS the tenant: keyed by its own id, and these routes bind
+  // the token's tenant (T) as that id, so a tenant can only read/write its OWN
+  // row. "FROM/UPDATE tenants ... WHERE id = ?" is correctly scoped.
+  const tenantsSelfRow  = /\bFROM TENANTS WHERE ID = \?/.test(upper) ||
+                          /\bUPDATE TENANTS SET .* WHERE ID=\?/.test(upper);
+  if (touchesSessions || usersById || usersByEmail || usersUpgrade || insertSession || tenantsSelfRow) continue;
 
   if (/TENANT_ID/.test(upper)) ok();
   else fail(`Line ${lineNo}: data statement missing tenant_id -> ${sql.slice(0, 90)}`);
