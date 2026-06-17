@@ -976,6 +976,8 @@ export default {
           if (b.display_name      !== undefined) { fields.push('display_name=?');      values.push(String(b.display_name)); }
           if (b.is_owner_operator !== undefined) { fields.push('is_owner_operator=?'); values.push(b.is_owner_operator ? 1 : 0); }
           if (b.color             !== undefined) { fields.push('color=?');             values.push(String(b.color)); }
+          if (b.state_label       !== undefined) { fields.push('state_label=?');       values.push(String(b.state_label)); }
+          if (b.state_rate        !== undefined) { fields.push('state_rate=?');        values.push(parseFloat(b.state_rate) || 0); }
           if (b.active            !== undefined) { fields.push('active=?');            values.push(b.active ? 1 : 0); }
           if (fields.length === 0) return json({ id: existing.id, updated: true });
           fields.push("updated_at=datetime('now')");
@@ -986,13 +988,15 @@ export default {
         const id = crypto.randomUUID();
         await env.DB.prepare(`
           INSERT INTO drivers
-            (id, tenant_id, name, display_name, is_owner_operator, color, active, created_at, updated_at)
-          VALUES (?,?,?,?,?,?,?,datetime('now'),datetime('now'))
+            (id, tenant_id, name, display_name, is_owner_operator, color, state_label, state_rate, active, created_at, updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))
         `).bind(
           id, T, name,
           b.display_name || '',
           b.is_owner_operator ? 1 : 0,
           b.color || '#1e88e5',
+          b.state_label || '',
+          parseFloat(b.state_rate) || 0,
           b.active === undefined ? 1 : (b.active ? 1 : 0),
         ).run();
         return json({ id, updated: false });
@@ -1011,6 +1015,8 @@ export default {
         if (b.display_name      !== undefined) { fields.push('display_name=?');      values.push(String(b.display_name)); }
         if (b.is_owner_operator !== undefined) { fields.push('is_owner_operator=?'); values.push(b.is_owner_operator ? 1 : 0); }
         if (b.color             !== undefined) { fields.push('color=?');             values.push(String(b.color)); }
+        if (b.state_label       !== undefined) { fields.push('state_label=?');       values.push(String(b.state_label)); }
+        if (b.state_rate        !== undefined) { fields.push('state_rate=?');        values.push(parseFloat(b.state_rate) || 0); }
         if (b.active            !== undefined) { fields.push('active=?');            values.push(b.active ? 1 : 0); }
         if (fields.length === 0) return json({ error: 'Nothing to update' }, 400);
         fields.push("updated_at=datetime('now')");
