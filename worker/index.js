@@ -50,10 +50,27 @@ class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-// THE GATE — resolves tenant_id from the session token only.
+// THE GATE — resolves tenant_id from the session token.
+//
+// Token source: the "Authorization: Bearer" header is the primary channel and
+// the ONLY channel accepted for any state-changing request. As a SECONDARY
+// channel, a token may arrive in the ?t= query param — but ONLY on GET requests.
+// This exists so a plain browser <a href> / <img src> opening a file route
+// (invoice PDF, credential file, maintenance/fuel receipt) can authenticate,
+// since those tags cannot send a header. A GET can never drive a write in this
+// Worker (every INSERT/UPDATE/DELETE route is POST/PATCH/DELETE), so a token in
+// a URL is structurally incapable of mutating data. The session lookup and the
+// tenant_id resolution below are IDENTICAL no matter which channel supplied the
+// token — no new trust, just a second way to present the SAME credential, which
+// still must resolve to a valid unexpired session. Sessions are short-lived
+// (12h TTL), bounding the exposure of a token that lands in a URL or log.
 async function requireTenant(env, request) {
   const auth = request.headers.get('Authorization') || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  let token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  // GET-only fallback: token from ?t= query, for browser-opened file links.
+  if (!token && request.method === 'GET') {
+    token = (new URL(request.url).searchParams.get('t') || '').trim();
+  }
   if (!token) throw new HttpError(401, 'Missing session token');
 
   const sess = await env.DB.prepare(
