@@ -1,14 +1,16 @@
 // src/App.jsx
 // (c) dbappsystems.com | daddyboyapps.com
 // Load Ledger V5 — auth wired to src/api.js (token-based, tenant-aware).
-// AUTH MIGRATION (this commit):
-//   * login -> apiLogin() stores the session token; no more plaintext password.
-//   * all API calls go through api() so the Bearer token is attached + 401 handled.
-//   * session restore reads the token session from src/api.js.
-//   * loads tenant settings (split %, branding) on login.
-// WHITE-LABEL TODO (next commit): the login/header still hardcode EDGERTON /
-//   "load ledger v4" / V4 badge, and the bookkeeper bar hardcodes ['BRUCE','TIM'].
-//   These must read from tenantSettings + the tenant's own drivers.
+//
+// AUTH MIGRATION (complete): every child now imports the api() token client
+// directly, so the dead `api={API}` URL prop has been stripped from all of them,
+// the `API`/`API_BASE` plumbing is gone, and the obsolete `pin` prop (v4 PIN auth)
+// is removed. The per-tenant split (tenantSettings.driver_split_pct) is threaded
+// as `ownerCutPct` into the components that do settlement math.
+//
+// WHITE-LABEL TODO (next): the bookkeeper VIEWING bar still hardcodes
+// ['BRUCE','TIM']; it must read the tenant's own drivers. Header/logo already
+// read tenantSettings.display_name.
 
 import { useState, useEffect } from 'react'
 import RateCon          from './RateCon.jsx'
@@ -21,12 +23,7 @@ import Tax              from './Tax.jsx'
 import SettlementReport from './SettlementReport.jsx'
 import BookkeeperProfile from './BookkeeperProfile.jsx'
 
-import { api, login as apiLogin, logout as apiLogout, getSession, API_BASE } from './api.js'
-
-// API_BASE is the v5 worker URL (from src/api.js). Kept as `API` so child
-// components that still take an `api` URL prop keep working unchanged until
-// they are migrated to import the api() client directly.
-const API = API_BASE
+import { api, login as apiLogin, logout as apiLogout, getSession } from './api.js'
 
 const CRED_LABELS = {
   dot_physical:    'DOT Physical',
@@ -50,12 +47,17 @@ export default function App() {
   const [loadsSubView,    setLoadsSubView]    = useState('list')
   const [driver,          setDriver]          = useState(null)
   const [role,            setRole]            = useState(null)
-  const [sessionPassword, setSessionPassword] = useState(null)
   const [viewDriver,      setViewDriver]      = useState('BRUCE')
   const [load,            setLoad]            = useState(newLoad())
   const [loads,           setLoads]           = useState([])
   const [toast,           setToast]           = useState(null)
   const [tenantSettings,  setTenantSettings]  = useState(null)
+
+  // Per-tenant owner/company split (whole-number %, 1..50). Defaults to 10
+  // until tenant settings load — keeps Edgerton's historical 90/10 unchanged.
+  const ownerCutPct = (tenantSettings && tenantSettings.driver_split_pct != null)
+    ? tenantSettings.driver_split_pct
+    : 10
 
   const [lightMode, setLightMode] = useState(() => {
     return localStorage.getItem('ll_v4_theme') === 'light'
@@ -211,7 +213,6 @@ export default function App() {
     apiLogout()              // clears the v5 session token + tells the worker
     setDriver(null)
     setRole(null)
-    setSessionPassword(null)
     setTenantSettings(null)
     setEmail('')
     setPassword('')
@@ -381,6 +382,7 @@ export default function App() {
         {isBookkeeper && (tab === 'maintenance' || tab === 'assets') ? (
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
             <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em' }}>VIEWING:</div>
+            {/* WHITE-LABEL TODO: hardcoded driver list — should be the tenant's own drivers. */}
             {['BRUCE','TIM'].map(d => (
               <button key={d} onClick={() => setViewDriver(d)} style={{ padding:'7px 16px', borderRadius:8, border:'none', background: viewDriver === d ? 'var(--amber)' : 'var(--navy3)', color: viewDriver === d ? '#0A1628' : 'var(--grey)', fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>{d}</button>
             ))}
@@ -410,19 +412,19 @@ export default function App() {
 
             {loadsSubView === 'ratecon' && !isBookkeeper && (
               <div style={{ flex:1, overflowY:'auto' }}>
-                <RateCon load={load} setLoad={setLoad} driver={driver} api={API} showToast={showToast} onNext={() => setLoadsSubView('invoice')} />
+                <RateCon load={load} setLoad={setLoad} driver={driver} showToast={showToast} onNext={() => setLoadsSubView('invoice')} />
               </div>
             )}
 
             {loadsSubView === 'invoice' && !isBookkeeper && (
               <div style={{ flex:1, overflowY:'auto' }}>
-                <Invoice load={load} setLoad={setLoad} driver={driver} api={API} showToast={showToast} fetchLoads={fetchLoads} resetLoad={afterInvoiceSave} />
+                <Invoice load={load} setLoad={setLoad} driver={driver} showToast={showToast} fetchLoads={fetchLoads} resetLoad={afterInvoiceSave} tenantSettings={tenantSettings} />
               </div>
             )}
 
             {(loadsSubView === 'list' || isBookkeeper) && (
               <div style={{ flex:1, overflowY:'auto' }}>
-                <Loads loads={loads} setLoads={setLoads} driver={driver} api={API} showToast={showToast} fetchLoads={fetchLoads} />
+                <Loads loads={loads} setLoads={setLoads} driver={driver} showToast={showToast} fetchLoads={fetchLoads} />
               </div>
             )}
 
@@ -433,28 +435,28 @@ export default function App() {
         {tab === 'profile' && !isBookkeeper && (
           <div>
             <div className="section-title" style={{ paddingLeft:4 }}>SETTLEMENT REPORTS</div>
-            <SettlementReport driverName={driver} loads={loads} api={API} showToast={showToast} />
+            <SettlementReport driverName={driver} loads={loads} showToast={showToast} ownerCutPct={ownerCutPct} />
             <div style={{ height:32 }} />
-            <Tax loads={loads} driver={driver} api={API} />
+            <Tax loads={loads} driver={driver} />
             <div style={{ height:32 }} />
-            <DriverProfile driver={driver} api={API} showToast={showToast} pin={sessionPassword} />
+            <DriverProfile driver={driver} showToast={showToast} />
             <div style={{ height:24 }} />
           </div>
         )}
 
         {/* -- PROFILE TAB - BOOKKEEPER ------------------ */}
         {tab === 'profile' && isBookkeeper && (
-          <BookkeeperProfile loads={loads} api={API} showToast={showToast} />
+          <BookkeeperProfile loads={loads} showToast={showToast} ownerCutPct={ownerCutPct} />
         )}
 
         {/* -- REPAIRS TAB ------------------------------- */}
         {tab === 'maintenance' && (
-          <Maintenance driver={activeDriver} api={API} showToast={showToast} onEntriesChange={setMaintenanceEntries} role={role} />
+          <Maintenance driver={activeDriver} showToast={showToast} onEntriesChange={setMaintenanceEntries} role={role} ownerCutPct={ownerCutPct} />
         )}
 
         {/* -- ASSETS TAB -------------------------------- */}
         {tab === 'assets' && (
-          <Assets driver={activeDriver} api={API} showToast={showToast} maintenanceEntries={maintenanceEntries} role={role} />
+          <Assets driver={activeDriver} showToast={showToast} maintenanceEntries={maintenanceEntries} role={role} />
         )}
 
       </div>
