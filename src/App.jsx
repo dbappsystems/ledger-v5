@@ -10,7 +10,8 @@
 //
 // WHITE-LABEL: the bookkeeper VIEWING bar now reads the tenant's own drivers via
 // useDrivers() (GET /api/drivers, falls back to BRUCE/TIM). Header/logo read
-// tenantSettings.display_name.
+// tenantSettings.display_name. Maintenance receives tenantSettings so its
+// financing labels read the tenant's company name (not hardcoded ETTR).
 
 import { useState, useEffect } from 'react'
 import RateCon          from './RateCon.jsx'
@@ -463,7 +464,7 @@ export default function App() {
 
         {/* -- REPAIRS TAB ------------------------------- */}
         {tab === 'maintenance' && (
-          <Maintenance driver={activeDriver} showToast={showToast} onEntriesChange={setMaintenanceEntries} role={role} ownerCutPct={ownerCutPct} />
+          <Maintenance driver={activeDriver} showToast={showToast} onEntriesChange={setMaintenanceEntries} role={role} ownerCutPct={ownerCutPct} tenantSettings={tenantSettings} />
         )}
 
         {/* -- ASSETS TAB -------------------------------- */}
