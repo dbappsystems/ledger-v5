@@ -14,7 +14,7 @@
 //   api()    -> attaches the token; on 401 clears session and triggers re-login
 //   logout() -> clears everything and tells the worker to drop the session
 
-const API_BASE = import.meta.env.VITE_API_URL || 'https://load-ledger-v5.d49rwgmpj9.workers.dev';
+const API_BASE = import.meta.env.VITE_API_URL || 'https://ledger-v5.d49rwgmpj9.workers.dev';
 
 const KEY = 'll_v5_session';
 
