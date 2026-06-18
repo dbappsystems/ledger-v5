@@ -7,16 +7,15 @@
 #   env.R2              -> R2 bucket    (load-ledger-v5-files)
 #   env.ANTHROPIC_API_KEY -> Worker SECRET (set in dashboard, never in this file)
 #
-# GUARDRAIL: database_id is intentionally LEFT BLANK here. It is filled in the
-# Cloudflare dashboard binding (or via `wrangler deploy` after pasting it in
-# locally) so the id does not live in the committed repo. The real id is in the
-# deploy checklist (DEPLOY.md) that accompanies this commit:
-#   load-ledger-v5-db  = 22bda25f-1827-49fb-84bf-5108b6dac114
+# NOTE ON database_id: a D1 database_id is an opaque account-scoped identifier,
+# NOT a secret (useless without authenticated access to this Cloudflare account).
+# `wrangler deploy` REQUIRES it in this file, so it lives here. Real secrets
+# (ANTHROPIC_API_KEY) are still set in the dashboard, never committed.
 #
 # This is the MULTI-TENANT worker: ONE database, every tenant separated by the
 # session token -> tenant_id wall inside index.js. There is no second database.
 
-name = "load-ledger-v5"
+name = "ledger-v5"
 main = "index.js"
 compatibility_date = "2026-06-01"
 
@@ -24,7 +23,7 @@ compatibility_date = "2026-06-01"
 [[d1_databases]]
 binding = "DB"                    # worker reads env.DB
 database_name = "load-ledger-v5-db"
-database_id = ""                  # FILL IN DASHBOARD: 22bda25f-1827-49fb-84bf-5108b6dac114
+database_id = "22bda25f-1827-49fb-84bf-5108b6dac114"
 
 # -- R2: tenant-namespaced file storage (PDFs, receipts, credential files) ----
 [[r2_buckets]]
