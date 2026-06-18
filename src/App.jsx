@@ -1,6 +1,6 @@
 // src/App.jsx
 // (c) dbappsystems.com | daddyboyapps.com
-// Load Ledger V5 — auth wired to src/api.js (token-based, tenant-aware).
+// Load Ledgers V5 — auth wired to src/api.js (token-based, tenant-aware).
 //
 // AUTH MIGRATION (complete): every child now imports the api() token client
 // directly, so the dead `api={API}` URL prop has been stripped from all of them,
@@ -12,6 +12,10 @@
 // useDrivers() (GET /api/drivers, falls back to BRUCE/TIM). Header/logo read
 // tenantSettings.display_name. Maintenance receives tenantSettings so its
 // financing labels read the tenant's company name (not hardcoded ETTR).
+//
+// BRANDING: product name is "Load Ledgers" (plural). The default wordmark/
+// subtitle show "LOAD LEDGERS" / "load ledgers" when no tenant display_name is
+// set; the "V5" version marker remains the header badge.
 
 import { useState, useEffect } from 'react'
 import RateCon          from './RateCon.jsx'
@@ -317,11 +321,11 @@ export default function App() {
   }
 
   function AppLogo({ large }) {
-    const name = (tenantSettings && tenantSettings.display_name) || 'LOAD LEDGER'
+    const name = (tenantSettings && tenantSettings.display_name) || 'LOAD LEDGERS'
     return (
       <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
         <div className="app-logo" style={ large ? { fontSize:32 } : {} }>{name.toUpperCase()}</div>
-        <div style={{ fontSize: large ? 10 : 8, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', fontWeight:400, whiteSpace:'nowrap' }}>load ledger</div>
+        <div style={{ fontSize: large ? 10 : 8, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', fontWeight:400, whiteSpace:'nowrap' }}>load ledgers</div>
       </div>
     )
   }
