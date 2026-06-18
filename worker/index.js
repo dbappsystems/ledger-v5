@@ -1120,6 +1120,41 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
+    // ── CONTACT MESSAGE POST (in-app; logged-in tenant -> dbappsystems) ──
+    // Authenticated channel only. tenant_id, user_id, and driver come from the
+    // verified session (ctx) — NEVER from the body — so every message is
+    // provably tied to a real tenant account. No captcha needed: the sender is
+    // already an authenticated, known tenant. Walled like every other write.
+    if (path === '/api/contact' && request.method === 'POST') {
+      try {
+        const b = await request.json();
+        const message = (b.message || '').trim();
+        if (!message) return json({ error: 'Message is required' }, 400);
+        if (message.length > 5000) return json({ error: 'Message is too long (5000 char max)' }, 400);
+        const subject = (b.subject || '').toString().slice(0, 200);
+        const id = crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO contact_messages
+            (id, tenant_id, user_id, driver, subject, message, status, created_at)
+          VALUES (?,?,?,?,?,?,'open',datetime('now'))
+        `).bind(id, T, ctx.user_id, ctx.driver_name || '', subject, message).run();
+        return json({ ok: true, id });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── CONTACT MESSAGES GET (owner reads their OWN tenant's messages) ────
+    // Owner-only. Tenant resolved from the token, so an owner can only ever
+    // read messages belonging to their own tenant.
+    if (path === '/api/contact' && request.method === 'GET') {
+      try {
+        if (ctx.role !== 'owner') return json({ error: 'Not authorized' }, 403);
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM contact_messages WHERE tenant_id=? ORDER BY created_at DESC LIMIT 200'
+        ).bind(T).all();
+        return json(results);
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
     return json({ message: 'Load Ledger V5 API — dbappsystems.com' });
   },
 };
