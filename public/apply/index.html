@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Apply — loadledgers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;900&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#0A1628; --navy2:#0f2238; --navy3:#16304d;
+    --amber:#ffb300; --white:#f5f7fa; --grey:#8aa0b8;
+    --border:#1e3a5c; --green:#43a047; --red:#e53935;
+    --font-head:'Barlow Condensed',system-ui,sans-serif;
+    --font-body:'Barlow',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--navy);color:var(--white);font-family:var(--font-body);-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:520px;margin:0 auto;padding:24px 18px 56px;}
+  .brand{display:flex;align-items:baseline;gap:6px;justify-content:center;margin:8px 0 4px;}
+  .brand .logo{font-family:var(--font-head);font-weight:900;font-size:30px;letter-spacing:.02em;color:var(--amber);line-height:1;}
+  .brand .v5{font-family:var(--font-head);font-weight:700;font-size:12px;color:var(--grey);letter-spacing:.04em;}
+  h1{font-family:var(--font-head);font-weight:900;font-size:24px;letter-spacing:.04em;text-align:center;margin:18px 0 6px;}
+  .sub{text-align:center;color:var(--grey);font-size:14px;line-height:1.5;margin:0 auto 18px;max-width:420px;}
+  .card{background:var(--navy2);border:1px solid var(--border);border-radius:14px;padding:20px;}
+  .req-note{background:rgba(255,179,0,0.08);border:1px solid var(--amber);border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.5;color:var(--white);margin-bottom:18px;}
+  label{display:block;font-family:var(--font-head);font-weight:700;font-size:12px;letter-spacing:.06em;color:var(--grey);margin:14px 0 6px;text-transform:uppercase;}
+  label .opt{color:var(--grey);font-weight:600;text-transform:none;letter-spacing:0;opacity:.7;}
+  input,textarea{width:100%;background:var(--navy3);border:1px solid var(--border);color:var(--white);border-radius:8px;padding:12px 14px;font-size:16px;font-family:var(--font-body);outline:none;}
+  input:focus,textarea:focus{border-color:var(--amber);}
+  input::placeholder,textarea::placeholder{color:var(--grey);}
+  textarea{min-height:90px;resize:vertical;}
+  .row{display:flex;gap:12px;}
+  .row > div{flex:1;}
+  .send{width:100%;margin-top:20px;padding:16px 0;border:none;border-radius:10px;background:var(--amber);color:var(--navy);font-family:var(--font-head);font-weight:900;font-size:16px;letter-spacing:.05em;cursor:pointer;}
+  .send:disabled{background:#555;color:#aaa;cursor:default;}
+  .err{color:var(--red);font-family:var(--font-head);font-weight:700;font-size:13px;margin-top:12px;text-align:center;}
+  .priv{text-align:center;font-size:12px;color:var(--grey);margin-top:16px;line-height:1.5;}
+  .priv a{color:var(--amber);text-decoration:none;}
+  .foot{text-align:center;font-size:10px;color:var(--grey);margin-top:24px;}
+  .done{text-align:center;padding:28px 10px;}
+  .done .check{font-size:46px;margin-bottom:10px;}
+  .done h2{font-family:var(--font-head);font-weight:900;font-size:22px;margin:0 0 8px;}
+  .done p{color:var(--grey);font-size:14px;line-height:1.55;margin:0;}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand"><span class="logo">loadledgers</span><span class="v5">v5</span></div>
+    <h1>APPLY FOR ACCESS</h1>
+    <p class="sub">Tell us about your operation. We'll review your request and set up your account by hand.</p>
+
+    <div class="card" id="card">
+      <div class="req-note">
+        Submitting this form is a <strong>request to be considered</strong> for a loadledgers account.
+        It does not create an account or guarantee acceptance. We'll review your information and follow up.
+      </div>
+
+      <label>Company / Legal Name</label>
+      <input id="company_name" type="text" placeholder="Your trucking company" autocomplete="organization" />
+
+      <label>Contact Name <span class="opt">(optional)</span></label>
+      <input id="contact_name" type="text" placeholder="Your name" autocomplete="name" />
+
+      <label>Email</label>
+      <input id="email" type="email" inputmode="email" autocapitalize="none" autocorrect="off" placeholder="you@email.com" autocomplete="email" />
+
+      <label>Phone <span class="opt">(optional)</span></label>
+      <input id="phone" type="tel" inputmode="tel" placeholder="(555) 555-5555" autocomplete="tel" />
+
+      <div class="row">
+        <div>
+          <label>MC # <span class="opt">(optional)</span></label>
+          <input id="mc_number" type="text" inputmode="numeric" placeholder="MC number" />
+        </div>
+        <div>
+          <label>DOT # <span class="opt">(optional)</span></label>
+          <input id="dot_number" type="text" inputmode="numeric" placeholder="DOT number" />
+        </div>
+      </div>
+
+      <label>Truck / Trailer Info <span class="opt">(optional)</span></label>
+      <input id="equipment" type="text" placeholder="e.g. 2022 Freightliner, reefer" />
+
+      <label>Anything else <span class="opt">(optional)</span></label>
+      <textarea id="notes" placeholder="Tell us anything else that helps us set you up."></textarea>
+
+      <button class="send" id="send" onclick="submitApply()">SEND REQUEST</button>
+      <div class="err" id="err" style="display:none;"></div>
+
+      <div class="priv">
+        By submitting, you agree your information will be handled per our
+        <a href="/privacy">Privacy Policy</a>.
+      </div>
+    </div>
+
+    <div class="foot">dbappsystems.com | daddyboyapps.com</div>
+  </div>
+
+<script>
+  var API = 'https://ledger-v5.d49rwgmpj9.workers.dev';
+
+  function submitApply(){
+    var btn = document.getElementById('send');
+    var err = document.getElementById('err');
+    err.style.display = 'none';
+
+    var company = document.getElementById('company_name').value.trim();
+    var email   = document.getElementById('email').value.trim();
+    if(!company){ showErr('Please enter your company name.'); return; }
+    if(!email){ showErr('Please enter your email.'); return; }
+
+    var payload = {
+      company_name: company,
+      contact_name: document.getElementById('contact_name').value.trim(),
+      email: email,
+      phone: document.getElementById('phone').value.trim(),
+      mc_number: document.getElementById('mc_number').value.trim(),
+      dot_number: document.getElementById('dot_number').value.trim(),
+      equipment: document.getElementById('equipment').value.trim(),
+      notes: document.getElementById('notes').value.trim()
+    };
+
+    btn.disabled = true;
+    btn.textContent = 'SENDING...';
+
+    fetch(API + '/api/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ return { ok: r.ok, d: d }; }); })
+    .then(function(res){
+      if(res.ok && res.d && res.d.ok){
+        showDone();
+      } else {
+        showErr((res.d && res.d.error) ? res.d.error : 'Could not send. Please try again.');
+        btn.disabled = false;
+        btn.textContent = 'SEND REQUEST';
+      }
+    })
+    .catch(function(){
+      showErr('Connection error. Please try again.');
+      btn.disabled = false;
+      btn.textContent = 'SEND REQUEST';
+    });
+  }
+
+  function showErr(msg){
+    var err = document.getElementById('err');
+    err.textContent = msg;
+    err.style.display = 'block';
+  }
+
+  function showDone(){
+    document.getElementById('card').innerHTML =
+      '<div class="done">' +
+        '<div class="check">\u2705</div>' +
+        '<h2>REQUEST RECEIVED</h2>' +
+        '<p>Thanks \u2014 we\u2019ve got your information. We\u2019ll review it and reach out to set up your account. You can close this page.</p>' +
+      '</div>';
+  }
+</script>
+</body>
+</html>
