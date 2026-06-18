@@ -18,6 +18,11 @@
 //      writes stamp tenant_id on INSERT and add "AND tenant_id = ?" to
 //      UPDATE/DELETE so no one can touch another tenant's row by guessing id.
 //
+// PUBLIC ZONE: a small set of routes run BEFORE the session gate because the
+// caller has no account yet — login, logout, and /api/apply (the signup
+// application form). /api/apply writes only to signup_requests and creates no
+// account; dbappsystems reviews and onboards by hand.
+//
 // OCR model: claude-sonnet-4-6 (carried from v4).
 
 const CORS = {
@@ -149,6 +154,36 @@ export default {
       const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
       if (token) await env.DB.prepare('DELETE FROM sessions WHERE token = ?').bind(token).run();
       return json({ ok: true });
+    }
+
+    // ── APPLY (PUBLIC — no login; applicant has no account yet) ──────────
+    // BEARDS DOCTRINE — Truth as Architecture: the real process is "they request,
+    // dbappsystems reviews, dbappsystems creates the account by hand." So this is
+    // an APPLICATION, not a signup. This route writes ONE row to signup_requests
+    // and does NOTHING else — it creates no account, issues no session, touches no
+    // tenant table. It is the only public write in the Worker; the surface is kept
+    // minimal: fixed fields only, every field length-capped, no file upload, no
+    // email sent. dbappsystems reads these requests from the DB and onboards by hand.
+    if (path === '/api/apply' && request.method === 'POST') {
+      try {
+        const b = await request.json();
+        const company = (b.company_name || '').trim();
+        const email   = (b.email || '').trim();
+        if (!company) return json({ error: 'Company name is required' }, 400);
+        if (!email)   return json({ error: 'Email is required' }, 400);
+        const cap = (v, n) => (v == null ? '' : String(v).slice(0, n));
+        const id = crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO signup_requests
+            (id, company_name, contact_name, email, phone, mc_number, dot_number, equipment, notes, status, created_at)
+          VALUES (?,?,?,?,?,?,?,?,?,'new',datetime('now'))
+        `).bind(
+          id, cap(company,200), cap(b.contact_name,120), cap(email,200),
+          cap(b.phone,40), cap(b.mc_number,40), cap(b.dot_number,40),
+          cap(b.equipment,500), cap(b.notes,2000),
+        ).run();
+        return json({ ok: true, id });
+      } catch(e) { return json({ error: e.message }, 500); }
     }
 
     // ── EVERYTHING BELOW REQUIRES A VALID SESSION ────────
