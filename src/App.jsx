@@ -13,9 +13,9 @@
 // tenantSettings.display_name. Maintenance receives tenantSettings so its
 // financing labels read the tenant's company name (not hardcoded ETTR).
 //
-// BRANDING: product name is "Load Ledgers" (plural). The default wordmark/
-// subtitle show "LOAD LEDGERS" / "load ledgers" when no tenant display_name is
-// set; the "V5" version marker remains the header badge.
+// BRANDING: product wordmark is lowercase "loadledgers" (one word) with a small
+// "v5" beside it, shown when no tenant display_name is set. A real tenant shows
+// THEIR company name (uppercased as their brand), no version marker.
 
 import { useState, useEffect } from 'react'
 import RateCon          from './RateCon.jsx'
@@ -321,11 +321,20 @@ export default function App() {
   }
 
   function AppLogo({ large }) {
-    const name = (tenantSettings && tenantSettings.display_name) || 'LOAD LEDGERS'
+    // Default product wordmark: lowercase "loadledgers" with a small "v5".
+    // A real tenant shows THEIR name (uppercased as their brand), no version mark.
+    const tenantName = tenantSettings && tenantSettings.display_name
+    if (tenantName) {
+      return (
+        <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
+          <div className="app-logo" style={ large ? { fontSize:32 } : {} }>{tenantName.toUpperCase()}</div>
+        </div>
+      )
+    }
     return (
-      <div style={{ display:'flex', alignItems:'baseline', gap:6 }}>
-        <div className="app-logo" style={ large ? { fontSize:32 } : {} }>{name.toUpperCase()}</div>
-        <div style={{ fontSize: large ? 10 : 8, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.08em', fontWeight:400, whiteSpace:'nowrap' }}>load ledgers</div>
+      <div style={{ display:'flex', alignItems:'baseline', gap:4 }}>
+        <div className="app-logo" style={ large ? { fontSize:32, textTransform:'none' } : { textTransform:'none' } }>loadledgers</div>
+        <div style={{ fontSize: large ? 13 : 10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.04em', fontWeight:700, whiteSpace:'nowrap' }}>v5</div>
       </div>
     )
   }
