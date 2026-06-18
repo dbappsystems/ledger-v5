@@ -16,6 +16,10 @@
 // BRANDING: product wordmark is lowercase "loadledgers" (one word) with a small
 // "v5" beside it, shown when no tenant display_name is set. A real tenant shows
 // THEIR company name (uppercased as their brand), no version marker.
+//
+// FEEDBACK: a floating in-app feedback bubble (<Feedback/>) is rendered only in
+// the logged-in app (never on the login screen). It posts comments to the DB
+// (POST /api/contact) — it does NOT send email. It floats above the tab bar.
 
 import { useState, useEffect } from 'react'
 import RateCon          from './RateCon.jsx'
@@ -27,6 +31,7 @@ import Assets           from './Assets.jsx'
 import Tax              from './Tax.jsx'
 import SettlementReport from './SettlementReport.jsx'
 import BookkeeperProfile from './BookkeeperProfile.jsx'
+import Feedback         from './Feedback.jsx'
 import { useDrivers }   from './useDrivers.js'
 
 import { api, login as apiLogin, logout as apiLogout, getSession } from './api.js'
@@ -521,6 +526,10 @@ export default function App() {
         </button>
 
       </div>
+
+      {/* In-app feedback bubble — logged-in only, floats above the tab bar,
+          posts to the DB (no email). */}
+      <Feedback />
 
       {toast && <div className="toast">{toast}</div>}
     </div>
