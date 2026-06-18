@@ -1,0 +1,30 @@
+# public/_headers
+# (c) dbappsystems.com | daddyboyapps.com
+# Load Ledgers V5 — security response headers for Cloudflare Pages.
+#
+# BEARDS DOCTRINE — Truth as Architecture: security is enforced at the edge on
+# every response, not left to chance. These headers are what the Mozilla HTTP
+# Observatory grades. Applied to every path on the site.
+#
+# WHAT EACH HEADER DOES (and which Observatory test it fixes):
+#   Strict-Transport-Security : forces HTTPS for 2 years, eligible for preload.   (HSTS test)
+#   Content-Security-Policy   : whitelists exactly what the app may load/connect. (CSP test)
+#   X-Frame-Options + frame-ancestors 'none' : blocks clickjacking / embedding.   (X-Frame-Options test)
+#   X-Content-Type-Options    : already passing; kept here so it never regresses.
+#   Referrer-Policy           : already passing; kept explicit.
+#   Permissions-Policy        : disables APIs the app never uses (camera mic etc).
+#
+# CSP NOTE: the allow-list below is built for what loadledgers ACTUALLY uses —
+# its own origin, Google Fonts, and the ledger-v5 Worker API. If a future
+# feature loads from a new origin, that origin must be added here or it will be
+# blocked. 'unsafe-inline' is included for style/script because the app and the
+# static pages use inline styles and small inline scripts; removing it later
+# (via hashes/nonces) would raise the grade further but is not required for A.
+
+/*
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://ledger-v5.d49rwgmpj9.workers.dev; connect-src 'self' https://ledger-v5.d49rwgmpj9.workers.dev; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=()
