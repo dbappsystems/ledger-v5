@@ -1,0 +1,36 @@
+# worker/wrangler.toml
+# (c) dbappsystems.com | daddyboyapps.com
+# Load Ledger V5 — Cloudflare Worker config
+#
+# BINDINGS — these names are what worker/index.js reads. Do not rename them:
+#   env.DB              -> D1 database  (load-ledger-v5-db)
+#   env.R2              -> R2 bucket    (load-ledger-v5-files)
+#   env.ANTHROPIC_API_KEY -> Worker SECRET (set in dashboard, never in this file)
+#
+# GUARDRAIL: database_id is intentionally LEFT BLANK here. It is filled in the
+# Cloudflare dashboard binding (or via `wrangler deploy` after pasting it in
+# locally) so the id does not live in the committed repo. The real id is in the
+# deploy checklist (DEPLOY.md) that accompanies this commit:
+#   load-ledger-v5-db  = 22bda25f-1827-49fb-84bf-5108b6dac114
+#
+# This is the MULTI-TENANT worker: ONE database, every tenant separated by the
+# session token -> tenant_id wall inside index.js. There is no second database.
+
+name = "load-ledger-v5"
+main = "index.js"
+compatibility_date = "2026-06-01"
+
+# -- D1: the single multi-tenant database ------------------------------------
+[[d1_databases]]
+binding = "DB"                    # worker reads env.DB
+database_name = "load-ledger-v5-db"
+database_id = ""                  # FILL IN DASHBOARD: 22bda25f-1827-49fb-84bf-5108b6dac114
+
+# -- R2: tenant-namespaced file storage (PDFs, receipts, credential files) ----
+[[r2_buckets]]
+binding = "R2"                    # worker reads env.R2
+bucket_name = "load-ledger-v5-files"
+
+# -- SECRETS (NOT stored here) ------------------------------------------------
+# Set once in the dashboard or via:  wrangler secret put ANTHROPIC_API_KEY
+# Used by the /api/ocr route for receipt/rate-con OCR (claude-sonnet-4-6).
