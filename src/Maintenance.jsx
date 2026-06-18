@@ -2,21 +2,24 @@
 // (c) dbappsystems.com | daddyboyapps.com
 // Load Ledger V5 — Maintenance Ledger
 //
-// AUTH MIGRATION: all 13 calls go through the token api() client. The `api`
-// URL prop is gone. The receipt-view link uses a ?t=<token> query.
-//   WORKER TODO: the maintenance-receipt GET must also accept ?t=<token>
-//   (a plain <a> link can't send the Authorization header).
+// AUTH MIGRATION: all calls go through the token api() client. The receipt-view
+// link uses a ?t=<token> query.
 //
-// PER-TENANT SPLIT: computeRunningBalance now receives ownerCutPct (from tenant
-// settings; default 10 keeps Edgerton unchanged) so the "balance owed to driver"
-// number matches the Settlement Report under any split.
+// PER-TENANT SPLIT: computeRunningBalance receives ownerCutPct (from tenant
+// settings; default 10) so the "balance owed to driver" matches Settlement.
 //
-// WHITE-LABEL TODO: this file hardcodes the Tim↔EDGERTON financing relationship
-// (paid_by 'EDGERTON', /api/escrow-payments/TIM, the "ETTR Financed Repair" fund
-// tracker, and the TIM/EDGERTON toggle). That financing feature is Edgerton-
-// specific business logic — for other tenants it must be generalized (per-tenant
-// financer label, or hidden entirely) rather than assuming a driver named TIM and
-// a company named EDGERTON.
+// WHITE-LABEL (DONE — labels/storage generalized): the financing relationship is
+// no longer hardcoded to a driver named TIM and a company named EDGERTON.
+//   * "driver paid"     is stored as the DRIVER'S OWN NAME in paid_by.
+//   * "company financed" is stored as the literal 'CARRIER' in paid_by.
+//   * Labels render from the logged-in `driver` and tenantSettings.display_name
+//     (e.g. "JAKE PAID" / "TEST HAULING CO FINANCED").
+//   * isFinanced() treats BOTH 'CARRIER' and the legacy 'EDGERTON' as financed,
+//     so Edgerton's existing rows keep working during the data transition (a
+//     later one-line migration sets paid_by='CARRIER' where paid_by='EDGERTON').
+//   The financing MECHANISM (escrow_payments + the signed repair-fund tracker)
+//   is unchanged — only the tenant-specific names were generalized. A future
+//   pass can unify this onto the carrier_advances table.
 //
 // ACCRUAL: repair expense posts at entry_date; financed-repair payback is debt
 // service / reserve contribution, never an expense line.
@@ -49,7 +52,12 @@ const TYPE_ICONS = {
   'Other Equipment': '⚙️',
 }
 
-export default function Maintenance({ driver, showToast, onEntriesChange, role, ownerCutPct = 10 }) {
+// Canonical stored value for a company-financed repair (tenant-neutral).
+const FINANCED = 'CARRIER'
+// A repair is "financed" if stored as CARRIER (new) or EDGERTON (legacy rows).
+function isFinanced(paidBy) { return paidBy === FINANCED || paidBy === 'EDGERTON' }
+
+export default function Maintenance({ driver, showToast, onEntriesChange, role, ownerCutPct = 10, tenantSettings }) {
   const [entries,            setEntries]            = useState([])
   const [assets,             setAssets]             = useState([])
   const [loading,            setLoading]            = useState(true)
@@ -69,19 +77,34 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
   const [showFundEscrow,      setShowFundEscrow]      = useState(false)
   const [fundEscrowAmount,    setFundEscrowAmount]    = useState('')
   const [fundingEscrow,       setFundingEscrow]       = useState(false)
-  const [timSettlementOwed,   setTimSettlementOwed]   = useState(null)
+  const [driverSettlementOwed,setDriverSettlementOwed]= useState(null)
 
   const isBookkeeper = role === 'bookkeeper'
-  const isTim        = driver === 'TIM'
+
+  // WHITE-LABEL: the company name for financing labels comes from tenant
+  // settings; the driver-paid label uses the logged-in driver's own name.
+  const companyName = (tenantSettings && tenantSettings.display_name && tenantSettings.display_name.trim())
+    || 'CARRIER'
+  const driverLabel  = (driver || 'DRIVER').toUpperCase()
+  const companyLabel = companyName.toUpperCase()
+
+  // The repair-fund / financing feature is available to the logged-in driver
+  // (not the bookkeeper). It used to be gated to a driver named TIM.
+  const canUseFund = !isBookkeeper && !!driver
 
   const [form, setForm] = useState({
     entry_date:  new Date().toISOString().split('T')[0],
     category:    'Repair',
     description: '',
     amount:      '',
-    paid_by:     'TIM',
+    paid_by:     driver,   // default: the driver paid (stores driver name)
     asset_id:    '',
   })
+
+  // Keep the form's default paid_by in sync if the driver prop resolves later.
+  useEffect(() => {
+    setForm(p => (isFinanced(p.paid_by) ? p : { ...p, paid_by: driver }))
+  }, [driver])
 
   const scanInputRef   = useRef()
   const receiptFileRef = useRef()
@@ -105,12 +128,12 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
     } finally {
       setLoading(false)
     }
-    if (isTim && !isBookkeeper) fetchEscrowPayments()
+    if (canUseFund) fetchEscrowPayments()
   }
 
   async function fetchEscrowPayments() {
     try {
-      const data = await apiClient('/api/escrow-payments/TIM')
+      const data = await apiClient('/api/escrow-payments/' + driver)
       const payments = Array.isArray(data) ? data : []
       setEscrowPayments(payments)
       setEscrowPaymentsTotal(payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0))
@@ -119,12 +142,12 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
     }
   }
 
-  async function fetchTimSettlementOwed() {
+  async function fetchDriverSettlementOwed() {
     try {
       const [allLoads, fuelData, escrowData] = await Promise.all([
         apiClient('/api/loads').catch(() => []),
-        apiClient('/api/fuel/TIM').catch(() => []),
-        apiClient('/api/escrow-payments/TIM').catch(() => []),
+        apiClient('/api/fuel/' + driver).catch(() => []),
+        apiClient('/api/escrow-payments/' + driver).catch(() => []),
       ])
       const loads       = Array.isArray(allLoads)   ? allLoads   : []
       const fuelEntries = Array.isArray(fuelData)   ? fuelData   : []
@@ -136,13 +159,13 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
       setEscrowPayments(payments)
       setEscrowPaymentsTotal(escrowTotal)
 
-      // ONE formula — src/settlementMath.js. Same number as the
-      // Settlement Report, always. Per-tenant split via ownerCutPct.
-      const rb = computeRunningBalance({ loads, fuelEntries, escrowTotal, driver: 'TIM', ownerCutPct })
-      setTimSettlementOwed(rb.stillOwed)
+      // ONE formula — src/settlementMath.js. Same number as the Settlement
+      // Report, always. Per-tenant split via ownerCutPct.
+      const rb = computeRunningBalance({ loads, fuelEntries, escrowTotal, driver, ownerCutPct })
+      setDriverSettlementOwed(rb.stillOwed)
     } catch (err) {
       console.error('Settlement fetch failed:', err)
-      setTimSettlementOwed(0)
+      setDriverSettlementOwed(0)
     }
   }
 
@@ -266,7 +289,7 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
         } catch(err) { console.error('Receipt upload failed:',err) }
       }
       showToast('✅ Entry saved!')
-      setForm({entry_date:new Date().toISOString().split('T')[0],category:'Repair',description:'',amount:'',paid_by:'TIM',asset_id:''})
+      setForm({entry_date:new Date().toISOString().split('T')[0],category:'Repair',description:'',amount:'',paid_by:driver,asset_id:''})
       setScannedImage(null)
       setShowForm(false)
       await fetchAll()
@@ -278,10 +301,8 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
   }
 
   async function togglePaidBy(entry) {
-    const newVal = entry.paid_by==='EDGERTON'?'TIM':'EDGERTON'
-    // SIGNED FUND: no hard block needed — if payments exceed the financed
-    // pool after this change, the difference shows as repair reserve on
-    // deposit. Money is never orphaned; the position self-corrects.
+    // Flip between "company financed" (CARRIER) and "driver paid" (driver name).
+    const newVal = isFinanced(entry.paid_by) ? driver : FINANCED
     setToggling(entry.id)
     try {
       await apiClient('/api/maintenance/'+entry.id,{
@@ -293,10 +314,10 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
         },
       })
       setEntries(prev=>prev.map(e=>e.id===entry.id?{...e,paid_by:newVal}:e))
-      if (newVal === 'TIM') {
-        showToast('✅ Moved to Tim Paid — repair balance updated')
+      if (!isFinanced(newVal)) {
+        showToast('✅ Moved to ' + driverLabel + ' Paid — repair balance updated')
       } else {
-        showToast('🏦 Added to ETTR Financed Repair')
+        showToast('🏦 Added to ' + companyLabel + ' Financed Repair')
       }
     } catch(err) { showToast('⚠️ Update failed: '+err.message) }
     finally { setToggling(null) }
@@ -305,9 +326,7 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
   async function fundEscrow() {
     const amt = parseFloat(fundEscrowAmount)
     if (!amt || amt <= 0) { showToast('Enter a valid amount'); return }
-    // SIGNED FUND: paying past zero is allowed — the excess builds the
-    // repair reserve. Only cap: money must exist in the settlement.
-    if (timSettlementOwed !== null && amt > timSettlementOwed) {
+    if (driverSettlementOwed !== null && amt > driverSettlementOwed) {
       showToast('Amount exceeds your balance owed — check your settlement report'); return
     }
     setFundingEscrow(true)
@@ -315,7 +334,7 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
       await apiClient('/api/escrow-payment', {
         method: 'POST',
         json: {
-          driver:     'TIM',
+          driver:     driver,
           amount:     amt,
           funded_at:  new Date().toISOString(),
         },
@@ -323,7 +342,7 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
       showToast('✅ Repair payment applied — $' + amt.toFixed(2))
       setFundEscrowAmount('')
       setShowFundEscrow(false)
-      setTimSettlementOwed(null)
+      setDriverSettlementOwed(null)
       await fetchAll()
     } catch (err) {
       showToast('⚠️ Fund failed: ' + err.message)
@@ -333,8 +352,6 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
   }
 
   async function deleteEntry(entry) {
-    // SIGNED FUND: deleting a financed entry just moves the fund position
-    // toward reserve — payments stay tracked, nothing is orphaned.
     setDeleting(true)
     try {
       try {
@@ -364,28 +381,26 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
 
   function fmt(n) { return '$'+(parseFloat(n)||0).toFixed(2) }
 
-  // ── BOOKKEEPER FILTER: hide EDGERTON paid entries from the bookkeeper ──
+  // ── BOOKKEEPER FILTER: hide company-financed entries from the bookkeeper ──
   const visibleEntries = isBookkeeper
-    ? entries.filter(e => e.paid_by !== 'EDGERTON')
+    ? entries.filter(e => !isFinanced(e.paid_by))
     : entries
 
   const filtered      = filter==='All' ? visibleEntries : visibleEntries.filter(e=>e.category===filter)
   const totalAll      = visibleEntries.reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
   const totalMonth    = visibleEntries.filter(e=>{if(!e.entry_date)return false;const d=new Date(e.entry_date),now=new Date();return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear()}).reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
-  const totalEdgerton = entries.filter(e=>e.paid_by==='EDGERTON').reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
-  const totalTimPaid  = entries.filter(e=>e.paid_by!=='EDGERTON').reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
+  const totalFinanced = entries.filter(e=>isFinanced(e.paid_by)).reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
+  const totalDriverPaid = entries.filter(e=>!isFinanced(e.paid_by)).reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
   const totalFiltered = filtered.reduce((s,e)=>s+(parseFloat(e.amount)||0),0)
 
-  // ETTR FINANCED REPAIR — SIGNED capital account between Tim and ETTR.
+  // COMPANY-FINANCED REPAIR — SIGNED capital account between driver and company.
   // fundPosition = payments in − repairs financed.
-  //   negative → balance owed to ETTR (capital advanced ahead of earnings)
+  //   negative → balance owed to company (capital advanced ahead of earnings)
   //   positive → repair reserve on deposit (pre-funded for unplanned repairs)
-  // A future ETTR-financed repair raises totalEdgerton, which draws the
-  // reserve down first before creating new debt — pure arithmetic.
-  const fundPosition = escrowPaymentsTotal - totalEdgerton
+  const fundPosition = escrowPaymentsTotal - totalFinanced
   const fundOwed     = Math.max(0, -fundPosition)
   const fundReserve  = Math.max(0,  fundPosition)
-  const fundSettled  = (totalEdgerton > 0 || escrowPaymentsTotal > 0) && fundPosition === 0
+  const fundSettled  = (totalFinanced > 0 || escrowPaymentsTotal > 0) && fundPosition === 0
 
   if (loading) return <div className="empty-state"><div className="icon">🔧</div><h3>LOADING...</h3></div>
 
@@ -414,19 +429,19 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
             <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',letterSpacing:'0.08em',marginBottom:8}}>PAYMENT SUMMARY — ALL TIME</div>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
               <div style={{background:'#1a2a0a',borderRadius:8,padding:'10px 12px',border:'1px solid #2e7d32'}}>
-                <div style={{fontSize:10,color:'#66bb6a',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>TIM PAID</div>
-                <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:900,color:'#66bb6a'}}>{fmt(totalTimPaid)}</div>
+                <div style={{fontSize:10,color:'#66bb6a',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>{driverLabel} PAID</div>
+                <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:900,color:'#66bb6a'}}>{fmt(totalDriverPaid)}</div>
                 <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>No reimbursement needed</div>
               </div>
               <div style={{background:'#1a0a2a',borderRadius:8,padding:'10px 12px',border:'1px solid #7b1fa2'}}>
-                <div style={{fontSize:10,color:'#ce93d8',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>ETTR FINANCED</div>
-                <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:900,color:'#ce93d8'}}>{fmt(totalEdgerton)}</div>
+                <div style={{fontSize:10,color:'#ce93d8',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>{companyLabel} FINANCED</div>
+                <div style={{fontFamily:'var(--font-head)',fontSize:16,fontWeight:900,color:'#ce93d8'}}>{fmt(totalFinanced)}</div>
                 <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>Total Financed — All Time</div>
               </div>
             </div>
 
-            {/* ETTR FINANCED REPAIR FUND — signed position tracker */}
-            {(totalEdgerton > 0 || escrowPaymentsTotal > 0) && (
+            {/* COMPANY-FINANCED REPAIR FUND — signed position tracker */}
+            {(totalFinanced > 0 || escrowPaymentsTotal > 0) && (
               <div style={{marginTop:8}}>
                 {fundOwed > 0 && (
                   <div style={{
@@ -440,7 +455,7 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
                     marginBottom: escrowPaymentsTotal > 0 ? 4 : 8,
                   }}>
                     <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700,color:'#ce93d8'}}>
-                      🏦 BALANCE OWED TO ETTR
+                      🏦 BALANCE OWED TO {companyLabel}
                     </span>
                     <span style={{fontSize:18,fontFamily:'var(--font-head)',fontWeight:900,color:'#ce93d8'}}>
                       -{fmt(fundOwed)}
@@ -465,7 +480,7 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
                       </span>
                     </div>
                     <div style={{fontSize:10,color:'var(--grey)',marginTop:4}}>
-                      Capital ready for unplanned repairs — the next ETTR financed repair draws from this first.
+                      Capital ready for unplanned repairs — the next {companyLabel} financed repair draws from this first.
                     </div>
                   </div>
                 )}
@@ -482,7 +497,7 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
                     marginBottom: escrowPaymentsTotal > 0 ? 4 : 8,
                   }}>
                     <span style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:700,color:'#66bb6a'}}>
-                      ✅ ETTR FINANCED REPAIR BALANCE
+                      ✅ {companyLabel} FINANCED REPAIR BALANCE
                     </span>
                     <span style={{fontSize:18,fontFamily:'var(--font-head)',fontWeight:900,color:'#66bb6a'}}>
                       {fmt(0)}
@@ -496,15 +511,15 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
                   </div>
                 )}
 
-                {/* FUND BUTTON — Tim only, not bookkeeper, always available */}
-                {isTim && (
+                {/* FUND BUTTON — logged-in driver only, not bookkeeper */}
+                {canUseFund && (
                   <button
                     onClick={() => {
                       const next = !showFundEscrow
                       setShowFundEscrow(next)
                       if (next) {
-                        setTimSettlementOwed(null)
-                        fetchTimSettlementOwed()
+                        setDriverSettlementOwed(null)
+                        fetchDriverSettlementOwed()
                       } else {
                         setFundEscrowAmount('')
                       }
@@ -522,7 +537,7 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
                 )}
 
                 {/* FUND PANEL */}
-                {showFundEscrow && isTim && (
+                {showFundEscrow && canUseFund && (
                   <div style={{
                     background:'#1a0a2a',
                     border:'1px solid #7b1fa2',
@@ -531,7 +546,7 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
                     marginBottom:8,
                   }}>
                     <div style={{fontSize:12,fontFamily:'var(--font-head)',fontWeight:900,color:'#ce93d8',letterSpacing:'0.08em',marginBottom:12}}>
-                      {fundOwed > 0 ? '💳 PAY ETTR FINANCED REPAIR' : '💰 ADD TO REPAIR RESERVE'}
+                      {fundOwed > 0 ? '💳 PAY ' + companyLabel + ' FINANCED REPAIR' : '💰 ADD TO REPAIR RESERVE'}
                     </div>
 
                     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}}>
@@ -542,15 +557,15 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
                         </div>
                       </div>
                       <div style={{background:'var(--navy3)',borderRadius:8,padding:'10px 12px'}}>
-                        <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>BALANCE OWED TO TIM</div>
+                        <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',letterSpacing:'0.06em',marginBottom:4}}>BALANCE OWED TO {driverLabel}</div>
                         <div style={{fontFamily:'var(--font-head)',fontSize:15,fontWeight:900,color:'var(--amber)'}}>
-                          {timSettlementOwed === null ? 'Loading...' : fmt(timSettlementOwed)}
+                          {driverSettlementOwed === null ? 'Loading...' : fmt(driverSettlementOwed)}
                         </div>
                       </div>
                     </div>
 
                     <div style={{fontSize:10,color:'var(--grey)',fontFamily:'var(--font-head)',marginBottom:12}}>
-                      Enter the amount to apply from your settlement. It pays down the balance owed to ETTR first — anything beyond that builds your repair reserve.
+                      Enter the amount to apply from your settlement. It pays down the balance owed to {companyLabel} first — anything beyond that builds your repair reserve.
                     </div>
 
                     <div style={{marginBottom:12}}>
@@ -713,24 +728,24 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
             <div style={{marginBottom:14}}>
               <div className="field-label" style={{marginBottom:8}}>Paid By</div>
               <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-                <button onClick={()=>setForm(p=>({...p,paid_by:'TIM'}))} style={{
+                <button onClick={()=>setForm(p=>({...p,paid_by:driver}))} style={{
                   padding:'12px 0',borderRadius:8,border:'none',
-                  background:form.paid_by==='TIM'?'#2e7d32':'var(--navy3)',
-                  color:form.paid_by==='TIM'?'#fff':'var(--grey)',
+                  background:!isFinanced(form.paid_by)?'#2e7d32':'var(--navy3)',
+                  color:!isFinanced(form.paid_by)?'#fff':'var(--grey)',
                   fontSize:13,fontFamily:'var(--font-head)',fontWeight:900,cursor:'pointer',
-                  borderLeft:form.paid_by==='TIM'?'3px solid #66bb6a':'3px solid transparent',
-                }}>✅ TIM PAID</button>
-                <button onClick={()=>setForm(p=>({...p,paid_by:'EDGERTON'}))} style={{
+                  borderLeft:!isFinanced(form.paid_by)?'3px solid #66bb6a':'3px solid transparent',
+                }}>✅ {driverLabel} PAID</button>
+                <button onClick={()=>setForm(p=>({...p,paid_by:FINANCED}))} style={{
                   padding:'12px 0',borderRadius:8,border:'none',
-                  background:form.paid_by==='EDGERTON'?'#4a148c':'var(--navy3)',
-                  color:form.paid_by==='EDGERTON'?'#fff':'var(--grey)',
+                  background:isFinanced(form.paid_by)?'#4a148c':'var(--navy3)',
+                  color:isFinanced(form.paid_by)?'#fff':'var(--grey)',
                   fontSize:13,fontFamily:'var(--font-head)',fontWeight:900,cursor:'pointer',
-                  borderLeft:form.paid_by==='EDGERTON'?'3px solid #ce93d8':'3px solid transparent',
-                }}>🏦 ETTR FINANCED</button>
+                  borderLeft:isFinanced(form.paid_by)?'3px solid #ce93d8':'3px solid transparent',
+                }}>🏦 {companyLabel} FINANCED</button>
               </div>
-              {form.paid_by==='EDGERTON'&&(
+              {isFinanced(form.paid_by)&&(
                 <div style={{fontSize:11,color:'#ce93d8',marginTop:6,fontFamily:'var(--font-head)'}}>
-                  ⚠️ This amount will be added to the ETTR financed repair balance
+                  ⚠️ This amount will be added to the {companyLabel} financed repair balance
                 </div>
               )}
             </div>
@@ -742,7 +757,7 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
               background:saving?'#555':'var(--amber)',color:'var(--navy)',
               fontSize:15,fontFamily:'var(--font-head)',fontWeight:900,cursor:'pointer',
             }}>{saving?'SAVING...':'SAVE ENTRY'}</button>
-            <button onClick={()=>{setShowForm(false);setScannedImage(null);setForm({entry_date:new Date().toISOString().split('T')[0],category:'Repair',description:'',amount:'',paid_by:'TIM',asset_id:''})}} style={{
+            <button onClick={()=>{setShowForm(false);setScannedImage(null);setForm({entry_date:new Date().toISOString().split('T')[0],category:'Repair',description:'',amount:'',paid_by:driver,asset_id:''})}} style={{
               flex:1,padding:'14px 0',borderRadius:8,border:'1px solid var(--border)',
               background:'transparent',color:'var(--grey)',
               fontSize:15,fontFamily:'var(--font-head)',fontWeight:700,cursor:'pointer',
@@ -783,7 +798,7 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
         const isUploading = uploading===entry.id
         const isToggling  = toggling===entry.id
         const catColor    = CAT_COLORS[entry.category]||'var(--grey)'
-        const isEdgerton  = entry.paid_by==='EDGERTON'
+        const entryFinanced = isFinanced(entry.paid_by)
         const linkedAsset = assets.find(a=>a.id===entry.asset_id)
         return (
           <div className="load-card" key={entry.id} style={{borderLeft:'3px solid '+catColor}}>
@@ -809,19 +824,19 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
                 <div style={{marginBottom:10}}>
                   <button disabled={isToggling} onClick={()=>togglePaidBy(entry)} style={{
                     padding:'8px 14px',borderRadius:8,border:'none',cursor:'pointer',
-                    background:isEdgerton?'#4a148c':'#2e7d32',color:'#fff',
+                    background:entryFinanced?'#4a148c':'#2e7d32',color:'#fff',
                     fontSize:12,fontFamily:'var(--font-head)',fontWeight:900,opacity:isToggling?0.6:1,
                   }}>
                     {isToggling
                       ? 'SAVING...'
-                      : isEdgerton
-                        ? '🏦 ETTR FINANCED — tap to change'
-                        : '✅ TIM PAID — tap to change'
+                      : entryFinanced
+                        ? '🏦 ' + companyLabel + ' FINANCED — tap to change'
+                        : '✅ ' + driverLabel + ' PAID — tap to change'
                     }
                   </button>
-                  {isEdgerton&&(
+                  {entryFinanced&&(
                     <div style={{fontSize:10,color:'#ce93d8',marginTop:4,fontFamily:'var(--font-head)'}}>
-                      ETTR financed — payback owed
+                      {companyLabel} financed — payback owed
                     </div>
                   )}
                 </div>
