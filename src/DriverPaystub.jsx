@@ -9,6 +9,11 @@
 //   writes anything and never changes the running balance. It cannot break
 //   billing; it only reads and arranges.
 //
+// PRESENTATION: a pay document, not a dashboard. ALL fonts are plain black.
+//   No red/amber/green. Deductions are shown with a leading minus sign, not
+//   color. The net line is black bold. This is intentional — a paystub should
+//   read like a printed settlement sheet.
+//
 // THE STUB (top to bottom), exactly as a driver expects a paystub:
 //
 //   DRIVER PAY
@@ -121,7 +126,6 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
     const payRows = weekLoads.map(l => {
       const loadTotal = parseFloat(l.net_pay) || parseFloat(l.base_pay) || 0 // billed total
       const base      = parseFloat(l.base_pay) || 0
-      const { driverNet } = calcPay(l, cut)   // base*(1-cut) (+detention handled below)
       const driverBase = l.is_owner_operator ? base : base * (1 - cut)
       const fuelSur   = parseFloat(l.fuel) || 0
       const detention = parseFloat(l.detention) || 0
@@ -167,39 +171,41 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
     return { payRows, driverGross, fleetFuelRows, fleetFuelTotal, advanceRows, advanceTotal, totalDeductions, netPay }
   }, [loads, driverName, week, cut, fuelEntries, carrierAdvances])
 
-  // -- STYLES (paystub look: white sheet, clean rows) ------------------------
+  // -- STYLES (paystub look: white sheet, plain BLACK text throughout) -------
+  const INK = '#111'            // one ink color for the whole document
+  const MUTE = '#555'           // muted black for secondary lines (dates/refs)
   const sheet = { position:'fixed', inset:0, background:'#fff', zIndex:9999, overflowY:'auto', WebkitOverflowScrolling:'touch' }
-  const bar   = { position:'sticky', top:0, background:'#1a2a3a', padding:'12px 16px', display:'flex', alignItems:'center', justifyContent:'space-between', zIndex:10 }
-  const wrap  = { padding:16, maxWidth:620, margin:'0 auto' }
-  const sect  = { fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', margin:'18px 0 6px', paddingLeft:2 }
-  const card  = { borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }
-  const row   = { display:'flex', justifyContent:'space-between', alignItems:'baseline', padding:'10px 12px', borderBottom:'1px solid #eee', fontSize:13, color:'#222' }
-  const sub   = { ...row, padding:'6px 12px 6px 28px', fontSize:12, color:'#666', borderBottom:'1px solid #f3f3f3' }
-  const rightAmt = { fontFamily:'var(--font-head)', fontWeight:700 }
-  const totalRow = { display:'flex', justifyContent:'space-between', alignItems:'baseline', padding:'12px', background:'#f0f0f0', fontWeight:800, fontSize:14, color:'#111', fontFamily:'var(--font-head)' }
+  const bar   = { position:'sticky', top:0, background:'#fff', borderBottom:'2px solid #111', padding:'12px 16px', display:'flex', alignItems:'center', justifyContent:'space-between', zIndex:10 }
+  const wrap  = { padding:16, maxWidth:620, margin:'0 auto', color:INK }
+  const sect  = { fontSize:12, fontWeight:900, color:INK, fontFamily:'var(--font-head)', letterSpacing:'0.08em', margin:'18px 0 6px', paddingLeft:2 }
+  const card  = { borderRadius:6, border:'1px solid #bbb', overflow:'hidden' }
+  const row   = { display:'flex', justifyContent:'space-between', alignItems:'baseline', padding:'10px 12px', borderBottom:'1px solid #e2e2e2', fontSize:13, color:INK }
+  const sub   = { ...row, padding:'6px 12px 6px 28px', fontSize:12, color:INK, borderBottom:'1px solid #eee' }
+  const rightAmt = { fontFamily:'var(--font-head)', fontWeight:700, color:INK }
+  const totalRow = { display:'flex', justifyContent:'space-between', alignItems:'baseline', padding:'12px', background:'#f2f2f2', fontWeight:800, fontSize:14, color:INK, fontFamily:'var(--font-head)' }
 
   return (
     <div style={sheet}>
       <div style={bar}>
         <div>
-          <div style={{ fontSize:11, color:'rgba(255,255,255,0.6)', fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>DRIVER SETTLEMENT</div>
-          <div style={{ fontSize:16, fontFamily:'var(--font-head)', fontWeight:900, color: color || '#64b5f6' }}>{driverName}</div>
+          <div style={{ fontSize:11, color:MUTE, fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>DRIVER SETTLEMENT</div>
+          <div style={{ fontSize:16, fontFamily:'var(--font-head)', fontWeight:900, color:INK }}>{driverName}</div>
         </div>
-        <button onClick={onClose} style={{ background:'rgba(255,255,255,0.15)', border:'none', color:'#fff', borderRadius:8, padding:'8px 16px', fontSize:14, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>X CLOSE</button>
+        <button onClick={onClose} style={{ background:'#111', border:'none', color:'#fff', borderRadius:6, padding:'8px 16px', fontSize:14, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>X CLOSE</button>
       </div>
 
       <div style={wrap}>
         {/* WEEK NAVIGATOR */}
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', margin:'4px 0 12px' }}>
-          <button onClick={() => setWeekOffset(o => o - 1)} style={{ padding:'6px 16px', borderRadius:8, border:'1px solid #ccc', background:'#f7f7f7', fontSize:20, fontFamily:'var(--font-head)', cursor:'pointer', lineHeight:1 }}>&#8249;</button>
+          <button onClick={() => setWeekOffset(o => o - 1)} style={{ padding:'6px 16px', borderRadius:6, border:'1px solid #999', background:'#fff', color:INK, fontSize:20, fontFamily:'var(--font-head)', cursor:'pointer', lineHeight:1 }}>&#8249;</button>
           <div style={{ textAlign:'center' }}>
-            <div style={{ fontSize:11, color:'#888', fontFamily:'var(--font-head)', letterSpacing:'0.06em' }}>SETTLEMENT WEEK (PAID {week.payDate.toLocaleDateString('en-US',{ month:'short', day:'numeric' }).toUpperCase()})</div>
-            <div style={{ fontSize:14, color:'#1a2a3a', fontFamily:'var(--font-head)', fontWeight:900, letterSpacing:'0.04em' }}>{week.label}</div>
+            <div style={{ fontSize:11, color:MUTE, fontFamily:'var(--font-head)', letterSpacing:'0.06em' }}>SETTLEMENT WEEK (PAID {week.payDate.toLocaleDateString('en-US',{ month:'short', day:'numeric' }).toUpperCase()})</div>
+            <div style={{ fontSize:14, color:INK, fontFamily:'var(--font-head)', fontWeight:900, letterSpacing:'0.04em' }}>{week.label}</div>
           </div>
-          <button disabled={weekOffset >= 0} onClick={() => setWeekOffset(o => o + 1)} style={{ padding:'6px 16px', borderRadius:8, border:'1px solid #ccc', background:'#f7f7f7', fontSize:20, fontFamily:'var(--font-head)', cursor:'pointer', lineHeight:1, opacity: weekOffset >= 0 ? 0.3 : 1 }}>&#8250;</button>
+          <button disabled={weekOffset >= 0} onClick={() => setWeekOffset(o => o + 1)} style={{ padding:'6px 16px', borderRadius:6, border:'1px solid #999', background:'#fff', color:INK, fontSize:20, fontFamily:'var(--font-head)', cursor:'pointer', lineHeight:1, opacity: weekOffset >= 0 ? 0.3 : 1 }}>&#8250;</button>
         </div>
 
-        {loading && <div style={{ textAlign:'center', color:'#888', padding:'30px 0', fontFamily:'var(--font-head)' }}>Loading settlement...</div>}
+        {loading && <div style={{ textAlign:'center', color:MUTE, padding:'30px 0', fontFamily:'var(--font-head)' }}>Loading settlement...</div>}
 
         {!loading && (
           <>
@@ -207,18 +213,18 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
             <div style={sect}>DRIVER PAY</div>
             <div style={card}>
               {stub.payRows.length === 0 && (
-                <div style={{ ...row, color:'#999', justifyContent:'center' }}>No loads billed in this week.</div>
+                <div style={{ ...row, color:MUTE, justifyContent:'center' }}>No loads billed in this week.</div>
               )}
               {stub.payRows.map((r, i) => (
                 <div key={i}>
                   <div style={row}>
                     <div>
                       <strong>Load #{r.loadNum}</strong>
-                      {r.isAch && <span style={{ marginLeft:6, fontSize:9, background:'#e8f5e9', color:'#2e7d32', padding:'1px 5px', borderRadius:3, fontWeight:700 }}>ACH</span>}
-                      <div style={{ fontSize:11, color:'#888' }}>{r.broker}</div>
-                      <div style={{ fontSize:11, color:'#888' }}>Load total {fmt(r.loadTotal)}</div>
+                      {r.isAch && <span style={{ marginLeft:6, fontSize:9, border:'1px solid #111', color:INK, padding:'1px 5px', borderRadius:3, fontWeight:700 }}>ACH</span>}
+                      <div style={{ fontSize:11, color:MUTE }}>{r.broker}</div>
+                      <div style={{ fontSize:11, color:MUTE }}>Load total {fmt(r.loadTotal)}</div>
                     </div>
-                    <div style={{ ...rightAmt, color:'#1a2a3a' }}>{fmt(r.driverBase)}</div>
+                    <div style={rightAmt}>{fmt(r.driverBase)}</div>
                   </div>
                   {r.fuelSur > 0 && (
                     <div style={sub}><span>Fuel Surcharge</span><span style={rightAmt}>{fmt(r.fuelSur)}</span></div>
@@ -238,46 +244,46 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
                 <div key={'f'+i} style={row}>
                   <div>
                     <strong>{r.label}</strong>
-                    <div style={{ fontSize:11, color:'#888' }}>{r.date}{r.note ? ' · ' + r.note : ''}</div>
+                    <div style={{ fontSize:11, color:MUTE }}>{r.date}{r.note ? ' · ' + r.note : ''}</div>
                   </div>
-                  <div style={{ ...rightAmt, color:'#c62828' }}>-{fmt(r.amount)}</div>
+                  <div style={rightAmt}>-{fmt(r.amount)}</div>
                 </div>
               ))}
               {stub.advanceRows.map((r, i) => (
                 <div key={'a'+i} style={row}>
                   <div>
                     <strong>{r.label}</strong>
-                    <div style={{ fontSize:11, color:'#888' }}>Ref: {r.ref || '-'}</div>
+                    <div style={{ fontSize:11, color:MUTE }}>Ref: {r.ref || '-'}</div>
                   </div>
-                  <div style={{ ...rightAmt, color:'#c62828' }}>-{fmt(r.amount)}</div>
+                  <div style={rightAmt}>-{fmt(r.amount)}</div>
                 </div>
               ))}
 
               {/* Recurring carrier charges — not yet stored; placeholder section
                   so the stub is structurally complete. Real lines wire in next. */}
-              <div style={{ ...row, color:'#aaa', fontStyle:'italic', fontSize:12 }}>
+              <div style={{ ...row, color:MUTE, fontStyle:'italic', fontSize:12 }}>
                 <span>Recurring charges (insurance, plates, payment plans) — coming next</span>
-                <span style={rightAmt}>—</span>
+                <span style={{ ...rightAmt, color:MUTE }}>—</span>
               </div>
 
               {stub.fleetFuelRows.length === 0 && stub.advanceRows.length === 0 && (
-                <div style={{ ...row, color:'#999', justifyContent:'center' }}>No deductions this week.</div>
+                <div style={{ ...row, color:MUTE, justifyContent:'center' }}>No deductions this week.</div>
               )}
-              <div style={totalRow}><span>TOTAL DEDUCTIONS</span><span style={{ color:'#c62828' }}>-{fmt(stub.totalDeductions)}</span></div>
+              <div style={totalRow}><span>TOTAL DEDUCTIONS</span><span>-{fmt(stub.totalDeductions)}</span></div>
             </div>
 
-            {/* NET PAY */}
-            <div style={{ marginTop:18, borderRadius:10, overflow:'hidden', border:'2px solid #1a2a3a' }}>
-              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'16px 14px', background:'#1a2a3a' }}>
+            {/* NET PAY — plain black, bordered, document style */}
+            <div style={{ marginTop:18, borderRadius:6, overflow:'hidden', border:'2px solid #111' }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'16px 14px', background:'#fff' }}>
                 <div>
-                  <div style={{ fontSize:11, color:'rgba(255,255,255,0.6)', fontFamily:'var(--font-head)', letterSpacing:'0.06em' }}>DRIVER PAY {fmt(stub.driverGross)} − DEDUCTIONS {fmt(stub.totalDeductions)}</div>
-                  <div style={{ fontSize:15, fontWeight:900, color:'#fff', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }}>NET DRIVER PAY</div>
+                  <div style={{ fontSize:11, color:MUTE, fontFamily:'var(--font-head)', letterSpacing:'0.06em' }}>DRIVER PAY {fmt(stub.driverGross)} − DEDUCTIONS {fmt(stub.totalDeductions)}</div>
+                  <div style={{ fontSize:15, fontWeight:900, color:INK, fontFamily:'var(--font-head)', letterSpacing:'0.04em' }}>NET DRIVER PAY</div>
                 </div>
-                <div style={{ fontSize:24, fontWeight:900, color:'#ffd54f', fontFamily:'var(--font-head)' }}>{fmt(stub.netPay)}</div>
+                <div style={{ fontSize:24, fontWeight:900, color:INK, fontFamily:'var(--font-head)' }}>{fmt(stub.netPay)}</div>
               </div>
             </div>
 
-            <div style={{ textAlign:'center', fontSize:10, color:'#bbb', padding:'24px 0 32px' }}>
+            <div style={{ textAlign:'center', fontSize:10, color:MUTE, padding:'24px 0 32px' }}>
               Generated by Load Ledgers — dbappsystems.com<br/>
               Settlement week Monday–Monday · numbers tie to billed loads
             </div>
