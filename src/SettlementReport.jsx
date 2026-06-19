@@ -20,10 +20,15 @@
 // ACCOUNTING MODEL: "Still Owed" is an all-time RUNNING BALANCE (not period-reset).
 // Period filters control which activity rows display; the bottom-line balance is
 // always the full picture: all earned − all fuel − all ACH − all escrow.
+//
+// WEEKLY PAYSTUB: each driver card also opens DriverPaystub.jsx — a read-only
+// Monday–Monday settlement stub (plain black ink). It reuses settlementMath so
+// its numbers tie to billing; it writes nothing.
 
 import { useState, useRef } from 'react'
 import { api as apiClient } from './api.js'
 import { useDrivers } from './useDrivers.js'
+import DriverPaystub from './DriverPaystub.jsx'
 import {
   normalizeOwnerCut, asArray, parseAppDate, loadDate,
   getLoadTotals, calcPay, advanceKept, reimbursementOwed,
@@ -618,6 +623,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
   const [period,          setPeriod]          = useState('monthly')
   const [periodOffset,    setPeriodOffset]    = useState(0)
   const [showStatement,   setShowStatement]   = useState(null)
+  const [showPaystub,     setShowPaystub]     = useState(null)
 
   // Fuel entry form state
   const [showFuelDrawer,  setShowFuelDrawer]  = useState(false)
@@ -1032,6 +1038,17 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
         />
       )}
 
+      {/* Weekly driver paystub overlay (read-only, Monday-Monday) */}
+      {showPaystub && (
+        <DriverPaystub
+          driverName={showPaystub}
+          loads={loads}
+          ownerCutPct={ownerCutPct}
+          color={colorFor(showPaystub)}
+          onClose={() => setShowPaystub(null)}
+        />
+      )}
+
       <input ref={fuelFileRef} type="file" accept="image/*,application/pdf" style={{display:'none'}} onChange={handleFuelFile} />
 
       {/* Load data trigger */}
@@ -1191,10 +1208,18 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
                   </div>
                 )}
 
+                {/* Weekly paystub button (driver settlement stub) */}
+                <button
+                  onClick={() => setShowPaystub(dn)}
+                  style={{ width:'100%', marginTop:12, padding:'12px 0', borderRadius:8, border:'none', background: color, color:'#fff', fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, cursor:'pointer', letterSpacing:'0.06em' }}
+                >
+                  WEEKLY PAYSTUB - {dn}
+                </button>
+
                 {/* View full statement button */}
                 <button
                   onClick={() => setShowStatement(dn)}
-                  style={{ width:'100%', marginTop:12, padding:'10px 0', borderRadius:8, border:'1px solid ' + color, background:'transparent', color, fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, cursor:'pointer', letterSpacing:'0.06em' }}
+                  style={{ width:'100%', marginTop:8, padding:'10px 0', borderRadius:8, border:'1px solid ' + color, background:'transparent', color, fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, cursor:'pointer', letterSpacing:'0.06em' }}
                 >
                   VIEW FULL STATEMENT - {dn}
                 </button>
