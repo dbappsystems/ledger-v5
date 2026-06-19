@@ -1,29 +1,6 @@
 // worker/index.js
 // (c) dbappsystems.com | daddyboyapps.com
 // Load Ledger V5 — Cloudflare Worker — MULTI-TENANT
-//
-// BEARDS DOCTRINE
-//   Truth as Architecture        : tenant separation is enforced by code on
-//                                  every read and write, never by convention.
-//   Accountability w/o Exception : every data table is filtered by tenant_id.
-//   Sovereignty of the User      : a tenant can only ever touch its own rows.
-//
-// THE WALL (how it works):
-//   1) Login issues an opaque session token (sessions table).
-//   2) Every data route calls requireTenant() FIRST.
-//   3) requireTenant() reads the token from the Authorization header,
-//      looks up its tenant_id, and returns it. The tenant_id NEVER comes
-//      from the request body or URL — only from the verified session.
-//   4) Every SQL statement is scoped: reads add "WHERE tenant_id = ?";
-//      writes stamp tenant_id on INSERT and add "AND tenant_id = ?" to
-//      UPDATE/DELETE so no one can touch another tenant's row by guessing id.
-//
-// PUBLIC ZONE: a small set of routes run BEFORE the session gate because the
-// caller has no account yet — login, logout, and /api/apply (the signup
-// application form). /api/apply writes only to signup_requests and creates no
-// account; dbappsystems reviews and onboards by hand.
-//
-// OCR model: claude-sonnet-4-6 (carried from v4).
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -38,7 +15,6 @@ function json(data, status = 200) {
   });
 }
 
-// ── AUTH HELPERS ────────────────────────────────────────────────────────────
 const SESSION_TTL_HOURS = 12;
 
 async function hashPassword(password, salt) {
@@ -55,24 +31,9 @@ class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-// THE GATE — resolves tenant_id from the session token.
-//
-// Token source: the "Authorization: Bearer" header is the primary channel and
-// the ONLY channel accepted for any state-changing request. As a SECONDARY
-// channel, a token may arrive in the ?t= query param — but ONLY on GET requests.
-// This exists so a plain browser <a href> / <img src> opening a file route
-// (invoice PDF, credential file, maintenance/fuel receipt) can authenticate,
-// since those tags cannot send a header. A GET can never drive a write in this
-// Worker (every INSERT/UPDATE/DELETE route is POST/PATCH/DELETE), so a token in
-// a URL is structurally incapable of mutating data. The session lookup and the
-// tenant_id resolution below are IDENTICAL no matter which channel supplied the
-// token — no new trust, just a second way to present the SAME credential, which
-// still must resolve to a valid unexpired session. Sessions are short-lived
-// (12h TTL), bounding the exposure of a token that lands in a URL or log.
 async function requireTenant(env, request) {
   const auth = request.headers.get('Authorization') || '';
   let token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
-  // GET-only fallback: token from ?t= query, for browser-opened file links.
   if (!token && request.method === 'GET') {
     token = (new URL(request.url).searchParams.get('t') || '').trim();
   }
@@ -97,6 +58,26 @@ async function requireTenant(env, request) {
   };
 }
 
+// Legacy V4 stored invoice PDFs in the load-ledger-files bucket (bound as R2_V4).
+// V4 was single-tenant, so keys had no tenant prefix. Exact prefix unknown, so
+// probe known candidates and return the first object found, or null.
+async function getV4Invoice(env, loadId) {
+  if (!env.R2_V4) return null;
+  const candidates = [
+    'invoices/' + loadId + '.pdf',
+    loadId + '.pdf',
+    'invoice/' + loadId + '.pdf',
+    loadId,
+  ];
+  for (const key of candidates) {
+    try {
+      const obj = await env.R2_V4.get(key);
+      if (obj) return obj;
+    } catch (_) { /* try next */ }
+  }
+  return null;
+}
+
 export default {
   async fetch(request, env) {
     const url  = new URL(request.url);
@@ -106,9 +87,6 @@ export default {
       return new Response(null, { headers: CORS });
     }
 
-    // ── AUTH LOGIN ───────────────────────────────────────
-    // Finds user by email, verifies password (salted hash, with one-time
-    // upgrade from legacy plaintext), issues a session token + tenant_id.
     if (path === '/api/auth/login' && request.method === 'POST') {
       try {
         const { email, password } = await request.json();
@@ -122,7 +100,7 @@ export default {
         if (user.salt) {
           ok = (await hashPassword(password, user.salt)) === user.password;
         } else {
-          ok = (user.password === password); // legacy plaintext row
+          ok = (user.password === password);
           if (ok) {
             const salt = randomHex(16);
             const hash = await hashPassword(password, salt);
@@ -148,7 +126,6 @@ export default {
       }
     }
 
-    // ── AUTH LOGOUT ──────────────────────────────────────
     if (path === '/api/auth/logout' && request.method === 'POST') {
       const auth = request.headers.get('Authorization') || '';
       const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
@@ -156,14 +133,6 @@ export default {
       return json({ ok: true });
     }
 
-    // ── APPLY (PUBLIC — no login; applicant has no account yet) ──────────
-    // BEARDS DOCTRINE — Truth as Architecture: the real process is "they request,
-    // dbappsystems reviews, dbappsystems creates the account by hand." So this is
-    // an APPLICATION, not a signup. This route writes ONE row to signup_requests
-    // and does NOTHING else — it creates no account, issues no session, touches no
-    // tenant table. It is the only public write in the Worker; the surface is kept
-    // minimal: fixed fields only, every field length-capped, no file upload, no
-    // email sent. dbappsystems reads these requests from the DB and onboards by hand.
     if (path === '/api/apply' && request.method === 'POST') {
       try {
         const b = await request.json();
@@ -186,17 +155,14 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── EVERYTHING BELOW REQUIRES A VALID SESSION ────────
-    // Resolve tenant once; any failure short-circuits to 401.
     let ctx;
     try {
       ctx = await requireTenant(env, request);
     } catch (e) {
       return json({ error: e.message }, e.status || 401);
     }
-    const T = ctx.tenant_id; // tenant scope for every query below
+    const T = ctx.tenant_id;
 
-    // ── OCR (login-gated; no DB write) ───────────────────
     if (path === '/api/ocr' && request.method === 'POST') {
       try {
         const { base64, mediaType, mode } = await request.json();
@@ -230,7 +196,6 @@ export default {
       }
     }
 
-    // ── LOADS GET ────────────────────────────────────────
     if (path === '/api/loads' && request.method === 'GET') {
       try {
         const { results } = await env.DB.prepare(
@@ -240,7 +205,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── LOADS POST ───────────────────────────────────────
     if (path === '/api/loads' && request.method === 'POST') {
       try {
         const b = await request.json();
@@ -303,13 +267,11 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── UPLOAD INVOICE PDF TO R2 ─────────────────────────
     if (path === '/api/upload-pdf' && request.method === 'POST') {
       try {
         const { base64, loadId } = await request.json();
         if (!base64 || !loadId) return json({ error: 'Missing base64 or loadId' }, 400);
         if (!env.R2) return json({ error: 'R2 not configured' }, 500);
-        // verify the load belongs to this tenant before writing its file
         const owns = await env.DB.prepare('SELECT id FROM loads WHERE id=? AND tenant_id=?').bind(loadId, T).first();
         if (!owns) return json({ error: 'Load not found' }, 404);
         const binary = atob(base64); const bytes = new Uint8Array(binary.length);
@@ -321,14 +283,50 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── SERVE INVOICE PDF FROM R2 ────────────────────────
+    // ── SAVE LEGACY V4 INVOICE INTO V5 (copy R2_V4 -> R2) ────────────────
+    // POST /api/invoice/:id/save — owner/bookkeeper, or the load's own driver.
+    // Reads the stored PDF from the legacy V4 bucket and writes it into the V5
+    // tenant-namespaced bucket, then stamps invoice_url. Idempotent.
+    if (path.startsWith('/api/invoice/') && path.endsWith('/save') && request.method === 'POST') {
+      try {
+        const loadId = path.slice('/api/invoice/'.length, -('/save'.length));
+        if (!env.R2) return json({ error: 'R2 not configured' }, 500);
+        const owns = await env.DB.prepare(
+          'SELECT id, driver FROM loads WHERE id=? AND tenant_id=?'
+        ).bind(loadId, T).first();
+        if (!owns) return json({ error: 'Load not found' }, 404);
+        if (ctx.role !== 'owner' && ctx.role !== 'bookkeeper' &&
+            (owns.driver || '').toUpperCase() !== (ctx.driver_name || '').toUpperCase()) {
+          return json({ error: 'Not authorized' }, 403);
+        }
+        const existing = await env.R2.get(T + '/invoices/' + loadId + '.pdf');
+        if (existing) {
+          await env.DB.prepare('UPDATE loads SET invoice_url=? WHERE id=? AND tenant_id=?')
+            .bind('/api/invoice/' + loadId, loadId, T).run();
+          return json({ ok: true, alreadyInV5: true });
+        }
+        const v4 = await getV4Invoice(env, loadId);
+        if (!v4) return json({ error: 'No stored V4 invoice for this load' }, 404);
+        const bytes = new Uint8Array(await v4.arrayBuffer());
+        if (bytes.byteLength < 1000) return json({ error: 'V4 object too small to be a PDF' }, 422);
+        await env.R2.put(T + '/invoices/' + loadId + '.pdf', bytes, {
+          httpMetadata: { contentType: 'application/pdf' },
+        });
+        await env.DB.prepare('UPDATE loads SET invoice_url=? WHERE id=? AND tenant_id=?')
+          .bind('/api/invoice/' + loadId, loadId, T).run();
+        return json({ ok: true, savedBytes: bytes.byteLength });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── SERVE INVOICE PDF (V5 bucket, with V4 fallback) ──────────────────
     if (path.startsWith('/api/invoice/') && request.method === 'GET') {
       try {
         const loadId = path.replace('/api/invoice/', '');
         if (!env.R2) return json({ error: 'R2 not configured' }, 500);
         const owns = await env.DB.prepare('SELECT id FROM loads WHERE id=? AND tenant_id=?').bind(loadId, T).first();
         if (!owns) return new Response('Invoice not found', { status: 404, headers: CORS });
-        const object = await env.R2.get(T + '/invoices/' + loadId + '.pdf');
+        let object = await env.R2.get(T + '/invoices/' + loadId + '.pdf');
+        if (!object) object = await getV4Invoice(env, loadId);
         if (!object) return new Response('Invoice not found', { status: 404, headers: CORS });
         return new Response(object.body, {
           headers: { ...CORS, 'Content-Type': 'application/pdf', 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
@@ -336,7 +334,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── CREDENTIALS GET ──────────────────────────────────
     if (path.startsWith('/api/credentials/') && !path.includes('/file/') && request.method === 'GET') {
       try {
         const driver = path.split('/')[3].toUpperCase();
@@ -357,7 +354,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── CREDENTIALS PATCH ────────────────────────────────
     if (path.startsWith('/api/credentials/') && !path.includes('/file/') && request.method === 'PATCH') {
       try {
         const driver = path.split('/')[3].toUpperCase();
@@ -396,7 +392,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── UPLOAD CREDENTIAL FILE TO R2 ─────────────────────
     if (path.includes('/api/credentials/') && path.includes('/file/') && request.method === 'POST') {
       try {
         const parts = path.split('/');
@@ -412,7 +407,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── SERVE CREDENTIAL FILE FROM R2 ────────────────────
     if (path.includes('/api/credentials/') && path.includes('/file/') && request.method === 'GET') {
       try {
         const parts = path.split('/');
@@ -432,7 +426,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── MAINTENANCE GET ──────────────────────────────────
     if (path.startsWith('/api/maintenance/') && request.method === 'GET') {
       try {
         const driver = path.split('/')[3].toUpperCase();
@@ -443,7 +436,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── MAINTENANCE POST ─────────────────────────────────
     if (path === '/api/maintenance' && request.method === 'POST') {
       try {
         const b = await request.json();
@@ -462,7 +454,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── MAINTENANCE PATCH ────────────────────────────────
     if (path.startsWith('/api/maintenance/') && path.split('/').length === 4 && request.method === 'PATCH') {
       try {
         const id = path.split('/')[3];
@@ -479,7 +470,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── MAINTENANCE DELETE ───────────────────────────────
     if (path.startsWith('/api/maintenance/') && path.split('/').length === 4 && request.method === 'DELETE') {
       try {
         const id = path.split('/')[3];
@@ -498,7 +488,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── UPLOAD MAINTENANCE RECEIPT ───────────────────────
     if (path.startsWith('/api/maintenance-receipt/') && request.method === 'POST') {
       try {
         const entryId = path.split('/')[3];
@@ -516,7 +505,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── SERVE MAINTENANCE RECEIPT ────────────────────────
     if (path.startsWith('/api/maintenance-receipt/') && request.method === 'GET') {
       try {
         const entryId = path.split('/')[3];
@@ -533,7 +521,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── ESCROW PAYMENTS GET ──────────────────────────────
     if (path.startsWith('/api/escrow-payments/') && request.method === 'GET') {
       try {
         const driver = path.split('/')[3].toUpperCase();
@@ -544,7 +531,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── ESCROW PAYMENT POST ──────────────────────────────
     if (path === '/api/escrow-payment' && request.method === 'POST') {
       try {
         const b = await request.json();
@@ -560,7 +546,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── ASSETS GET ───────────────────────────────────────
     if (path.startsWith('/api/assets/') && !path.includes('/payments') && request.method === 'GET') {
       try {
         const driver = path.split('/')[3].toUpperCase();
@@ -571,7 +556,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── ASSETS POST ──────────────────────────────────────
     if (path === '/api/assets' && request.method === 'POST') {
       try {
         const b = await request.json();
@@ -595,7 +579,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── ASSETS PATCH ─────────────────────────────────────
     if (path.startsWith('/api/assets/') && !path.includes('/payments') && request.method === 'PATCH') {
       try {
         const id = path.split('/')[3];
@@ -616,7 +599,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── ASSETS DELETE ────────────────────────────────────
     if (path.startsWith('/api/assets/') && !path.includes('/payments') && request.method === 'DELETE') {
       try {
         const id = path.split('/')[3];
@@ -632,7 +614,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── ASSET PAYMENTS GET ───────────────────────────────
     if (path.includes('/api/assets/') && path.includes('/payments') && request.method === 'GET') {
       try {
         const assetId = path.split('/')[3];
@@ -643,7 +624,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── ASSET PAYMENTS POST ──────────────────────────────
     if (path.includes('/api/assets/') && path.includes('/payments') && !path.includes('/payments/') && request.method === 'POST') {
       try {
         const assetId = path.split('/')[3];
@@ -662,7 +642,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── ASSET PAYMENTS DELETE ────────────────────────────
     if (path.includes('/api/assets/') && path.includes('/payments/') && request.method === 'DELETE') {
       try {
         const parts = path.split('/');
@@ -680,7 +659,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── LOADS PATCH ──────────────────────────────────────
     if (path.startsWith('/api/loads/') && request.method === 'PATCH') {
       try {
         const id = path.split('/')[3];
@@ -707,11 +685,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── LOADS DELETE ─────────────────────────────────────
-    // Owner-gated within the tenant:
-    //   role 'owner'      = can delete any load in their tenant
-    //   driver            = can delete ONLY their own loads
-    //   role 'bookkeeper' = no delete path (matches v4 NICOLE rule)
     if (path.startsWith('/api/loads/') && request.method === 'DELETE') {
       try {
         const id = path.split('/')[3];
@@ -730,7 +703,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── FUEL ENTRIES GET ─────────────────────────────────
     if (path.startsWith('/api/fuel/') && request.method === 'GET') {
       try {
         const driver = path.split('/')[3].toUpperCase();
@@ -741,7 +713,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── FUEL ENTRIES POST ────────────────────────────────
     if (path === '/api/fuel' && request.method === 'POST') {
       try {
         const b = await request.json();
@@ -760,7 +731,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── FUEL ENTRIES PATCH ───────────────────────────────
     if (path.startsWith('/api/fuel/') && path.split('/').length === 4 && request.method === 'PATCH') {
       try {
         const id = path.split('/')[3];
@@ -777,7 +747,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── FUEL ENTRIES DELETE ──────────────────────────────
     if (path.startsWith('/api/fuel/') && path.split('/').length === 4 && request.method === 'DELETE') {
       try {
         const id = path.split('/')[3];
@@ -792,7 +761,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── UPLOAD FUEL RECEIPT TO R2 ────────────────────────
     if (path.startsWith('/api/fuel-receipt/') && request.method === 'POST') {
       try {
         const entryId = path.split('/')[3];
@@ -810,7 +778,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── SERVE FUEL RECEIPT FROM R2 ───────────────────────
     if (path.startsWith('/api/fuel-receipt/') && request.method === 'GET') {
       try {
         const entryId = path.split('/')[3];
@@ -827,7 +794,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── BROKERS LIST ─────────────────────────────────────
     if (path === '/api/brokers' && request.method === 'GET') {
       try {
         const { results } = await env.DB.prepare(
@@ -837,7 +803,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── BROKERS MANUAL UPSERT ────────────────────────────
     if (path === '/api/brokers' && request.method === 'POST') {
       try {
         const b = await request.json();
@@ -875,7 +840,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── BROKER LOADS REPORT ──────────────────────────────
     if (path.startsWith('/api/brokers/') && path.endsWith('/loads') && request.method === 'GET') {
       try {
         const brokerId = path.split('/')[3];
@@ -902,7 +866,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── BROKER PATCH ─────────────────────────────────────
     if (path.startsWith('/api/brokers/') && path.split('/').length === 4 && request.method === 'PATCH') {
       try {
         const id = path.split('/')[3];
@@ -920,7 +883,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── BROKER DELETE ────────────────────────────────────
     if (path.startsWith('/api/brokers/') && path.split('/').length === 4 && request.method === 'DELETE') {
       try {
         const id = path.split('/')[3];
@@ -931,10 +893,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── TENANT SETTINGS GET ──────────────────────────────
-    // Returns the logged-in tenant's own white-label settings (split, branding,
-    // invoice identity). Tenant resolved from the token — a tenant can only ever
-    // read its OWN row. Any logged-in user of the tenant may read.
     if (path === '/api/tenant/settings' && request.method === 'GET') {
       try {
         const row = await env.DB.prepare(
@@ -948,21 +906,16 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── TENANT SETTINGS PATCH ────────────────────────────
-    // Updates the tenant's own settings. OWNER ONLY — a driver/bookkeeper cannot
-    // change the company split or branding. Tenant resolved from the token, so
-    // an owner can only ever modify their OWN tenant row.
     if (path === '/api/tenant/settings' && request.method === 'PATCH') {
       try {
         if (ctx.role !== 'owner') return json({ error: 'Only the owner can change company settings' }, 403);
         const b = await request.json();
         const fields = []; const values = [];
 
-        // Split: accept whole number or fraction, clamp 1..50 (whole %).
         if (b.driver_split_pct !== undefined) {
           let pct = Number(b.driver_split_pct);
           if (isNaN(pct)) return json({ error: 'driver_split_pct must be a number' }, 400);
-          if (pct > 0 && pct < 1) pct = pct * 100;   // 0.10 -> 10
+          if (pct > 0 && pct < 1) pct = pct * 100;
           if (pct < 1)  pct = 1;
           if (pct > 50) pct = 50;
           fields.push('driver_split_pct=?'); values.push(pct);
@@ -982,9 +935,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── DRIVERS LIST ─────────────────────────────────────
-    // The tenant's own driver roster (replaces hardcoded BRUCE/TIM). Any logged-in
-    // user of the tenant may read it (the UI needs it for tabs/leaderboard/colors).
     if (path === '/api/drivers' && request.method === 'GET') {
       try {
         const { results } = await env.DB.prepare(
@@ -994,9 +944,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── DRIVER CREATE / UPSERT ───────────────────────────
-    // Owner/bookkeeper only. name is the canonical UPPERCASE key, unique per
-    // tenant; re-posting an existing name updates that driver's fields.
     if (path === '/api/drivers' && request.method === 'POST') {
       try {
         if (ctx.role !== 'owner' && ctx.role !== 'bookkeeper') return json({ error: 'Not authorized' }, 403);
@@ -1038,8 +985,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── DRIVER PATCH ─────────────────────────────────────
-    // Owner/bookkeeper only.
     if (path.startsWith('/api/drivers/') && path.split('/').length === 4 && request.method === 'PATCH') {
       try {
         if (ctx.role !== 'owner' && ctx.role !== 'bookkeeper') return json({ error: 'Not authorized' }, 403);
@@ -1061,10 +1006,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── DRIVER DELETE ────────────────────────────────────
-    // Owner only. Soft-delete is preferred in the UI (set active=0) so historical
-    // loads keyed by this driver's name stay intact; hard delete is allowed but
-    // does NOT touch that driver's existing loads/fuel/advances.
     if (path.startsWith('/api/drivers/') && path.split('/').length === 4 && request.method === 'DELETE') {
       try {
         if (ctx.role !== 'owner') return json({ error: 'Not authorized' }, 403);
@@ -1076,9 +1017,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── CARRIER ADVANCES GET (per driver) ────────────────
-    // Carrier->driver direct loans for one driver. Reduces that driver's
-    // settlement until repaid. Separate from broker (comdata) billing.
     if (path.startsWith('/api/carrier-advances/') && request.method === 'GET') {
       try {
         const driver = path.split('/')[3].toUpperCase();
@@ -1089,8 +1027,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── CARRIER ADVANCE POST ─────────────────────────────
-    // Owner/bookkeeper only. reason: repair | general | fuel | other.
     if (path === '/api/carrier-advance' && request.method === 'POST') {
       try {
         if (ctx.role !== 'owner' && ctx.role !== 'bookkeeper') return json({ error: 'Not authorized' }, 403);
@@ -1114,8 +1050,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── CARRIER ADVANCE PATCH ────────────────────────────
-    // Owner/bookkeeper only. Edit amount/reason/notes or mark repaid.
     if (path.startsWith('/api/carrier-advance/') && path.split('/').length === 4 && request.method === 'PATCH') {
       try {
         if (ctx.role !== 'owner' && ctx.role !== 'bookkeeper') return json({ error: 'Not authorized' }, 403);
@@ -1142,8 +1076,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── CARRIER ADVANCE DELETE ───────────────────────────
-    // Owner/bookkeeper only.
     if (path.startsWith('/api/carrier-advance/') && path.split('/').length === 4 && request.method === 'DELETE') {
       try {
         if (ctx.role !== 'owner' && ctx.role !== 'bookkeeper') return json({ error: 'Not authorized' }, 403);
@@ -1155,11 +1087,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── CONTACT MESSAGE POST (in-app; logged-in tenant -> dbappsystems) ──
-    // Authenticated channel only. tenant_id, user_id, and driver come from the
-    // verified session (ctx) — NEVER from the body — so every message is
-    // provably tied to a real tenant account. No captcha needed: the sender is
-    // already an authenticated, known tenant. Walled like every other write.
     if (path === '/api/contact' && request.method === 'POST') {
       try {
         const b = await request.json();
@@ -1177,9 +1104,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── CONTACT MESSAGES GET (owner reads their OWN tenant's messages) ────
-    // Owner-only. Tenant resolved from the token, so an owner can only ever
-    // read messages belonging to their own tenant.
     if (path === '/api/contact' && request.method === 'GET') {
       try {
         if (ctx.role !== 'owner') return json({ error: 'Not authorized' }, 403);
