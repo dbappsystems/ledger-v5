@@ -58,24 +58,23 @@ async function requireTenant(env, request) {
   };
 }
 
-// Legacy V4 stored invoice PDFs in the load-ledger-files bucket (bound as R2_V4).
-// V4 was single-tenant, so keys had no tenant prefix. Exact prefix unknown, so
-// probe known candidates and return the first object found, or null.
+// Legacy V4 served stored invoice PDFs (with BOLs + lumper receipts attached)
+// from its own public worker at /api/invoice/{loadId}. The exact R2 object key
+// is unknown, but the V4 worker URL returns the real full PDF reliably, so we
+// fetch that directly and hand back a Response-like object with arrayBuffer().
+const V4_BASE = 'https://load-ledger-v4.d49rwgmpj9.workers.dev';
 async function getV4Invoice(env, loadId) {
-  if (!env.R2_V4) return null;
-  const candidates = [
-    'invoices/' + loadId + '.pdf',
-    loadId + '.pdf',
-    'invoice/' + loadId + '.pdf',
-    loadId,
-  ];
-  for (const key of candidates) {
-    try {
-      const obj = await env.R2_V4.get(key);
-      if (obj) return obj;
-    } catch (_) { /* try next */ }
+  try {
+    const res = await fetch(V4_BASE + '/api/invoice/' + loadId);
+    if (!res.ok) return null;
+    const ct = res.headers.get('content-type') || '';
+    if (ct.indexOf('pdf') === -1) return null;
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength < 1000) return null;
+    return { arrayBuffer: async () => buf, body: buf };
+  } catch (_) {
+    return null;
   }
-  return null;
 }
 
 export default {
@@ -152,6 +151,52 @@ export default {
           cap(b.equipment,500), cap(b.notes,2000),
         ).run();
         return json({ ok: true, id });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── ONE-TIME ADMIN: migrate all legacy V4 invoices into V5 ───────────
+    // POST-gated by a non-secret URL key. Loops every load for the caller's
+    // tenant, pulls each invoice PDF from the V4 worker URL, writes it into
+    // the V5 bucket at {tenant}/invoices/{loadId}.pdf, stamps invoice_url.
+    // Skips loads whose V4 invoice 404s. TEMPORARY — removed after migration.
+    if (path === '/api/admin/migrate-v4' && request.method === 'POST') {
+      try {
+        const key = url.searchParams.get('key') || '';
+        if (key !== 'edgerton-migrate-2026') return json({ error: 'Forbidden' }, 403);
+        if (!env.R2) return json({ error: 'R2 not configured' }, 500);
+        let ctxA;
+        try { ctxA = await requireTenant(env, request); }
+        catch (e) { return json({ error: e.message }, e.status || 401); }
+        const TA = ctxA.tenant_id;
+        const { results } = await env.DB.prepare(
+          'SELECT id, driver, load_number FROM loads WHERE tenant_id=?'
+        ).bind(TA).all();
+        const out = [];
+        let saved = 0, already = 0, nofile = 0;
+        for (const row of results) {
+          const loadId = row.id;
+          const existing = await env.R2.get(TA + '/invoices/' + loadId + '.pdf');
+          if (existing && existing.size > 5000) {
+            already++;
+            out.push({ load: row.load_number, driver: row.driver, status: 'already', bytes: existing.size });
+            continue;
+          }
+          const v4 = await getV4Invoice(env, loadId);
+          if (!v4) {
+            nofile++;
+            out.push({ load: row.load_number, driver: row.driver, status: 'no-file' });
+            continue;
+          }
+          const buf = await v4.arrayBuffer();
+          await env.R2.put(TA + '/invoices/' + loadId + '.pdf', buf, {
+            httpMetadata: { contentType: 'application/pdf' },
+          });
+          await env.DB.prepare('UPDATE loads SET invoice_url=? WHERE id=? AND tenant_id=?')
+            .bind('/api/invoice/' + loadId, loadId, TA).run();
+          saved++;
+          out.push({ load: row.load_number, driver: row.driver, status: 'saved', bytes: buf.byteLength });
+        }
+        return json({ ok: true, tenant: TA, total: results.length, saved, already, nofile, detail: out });
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
@@ -283,10 +328,10 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // ── SAVE LEGACY V4 INVOICE INTO V5 (copy R2_V4 -> R2) ────────────────
+    // ── SAVE LEGACY V4 INVOICE INTO V5 (fetch V4 URL -> R2) ──────────────
     // POST /api/invoice/:id/save — owner/bookkeeper, or the load's own driver.
-    // Reads the stored PDF from the legacy V4 bucket and writes it into the V5
-    // tenant-namespaced bucket, then stamps invoice_url. Idempotent.
+    // Pulls the stored PDF from the legacy V4 worker URL and writes it into the
+    // V5 tenant-namespaced bucket, then stamps invoice_url. Idempotent.
     if (path.startsWith('/api/invoice/') && path.endsWith('/save') && request.method === 'POST') {
       try {
         const loadId = path.slice('/api/invoice/'.length, -('/save'.length));
@@ -300,21 +345,21 @@ export default {
           return json({ error: 'Not authorized' }, 403);
         }
         const existing = await env.R2.get(T + '/invoices/' + loadId + '.pdf');
-        if (existing) {
+        if (existing && existing.size > 5000) {
           await env.DB.prepare('UPDATE loads SET invoice_url=? WHERE id=? AND tenant_id=?')
             .bind('/api/invoice/' + loadId, loadId, T).run();
           return json({ ok: true, alreadyInV5: true });
         }
         const v4 = await getV4Invoice(env, loadId);
         if (!v4) return json({ error: 'No stored V4 invoice for this load' }, 404);
-        const bytes = new Uint8Array(await v4.arrayBuffer());
-        if (bytes.byteLength < 1000) return json({ error: 'V4 object too small to be a PDF' }, 422);
-        await env.R2.put(T + '/invoices/' + loadId + '.pdf', bytes, {
+        const buf = await v4.arrayBuffer();
+        if (buf.byteLength < 1000) return json({ error: 'V4 object too small to be a PDF' }, 422);
+        await env.R2.put(T + '/invoices/' + loadId + '.pdf', buf, {
           httpMetadata: { contentType: 'application/pdf' },
         });
         await env.DB.prepare('UPDATE loads SET invoice_url=? WHERE id=? AND tenant_id=?')
           .bind('/api/invoice/' + loadId, loadId, T).run();
-        return json({ ok: true, savedBytes: bytes.byteLength });
+        return json({ ok: true, savedBytes: buf.byteLength });
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
@@ -326,9 +371,14 @@ export default {
         const owns = await env.DB.prepare('SELECT id FROM loads WHERE id=? AND tenant_id=?').bind(loadId, T).first();
         if (!owns) return new Response('Invoice not found', { status: 404, headers: CORS });
         let object = await env.R2.get(T + '/invoices/' + loadId + '.pdf');
-        if (!object) object = await getV4Invoice(env, loadId);
-        if (!object) return new Response('Invoice not found', { status: 404, headers: CORS });
-        return new Response(object.body, {
+        if (object) {
+          return new Response(object.body, {
+            headers: { ...CORS, 'Content-Type': 'application/pdf', 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
+          });
+        }
+        const v4 = await getV4Invoice(env, loadId);
+        if (!v4) return new Response('Invoice not found', { status: 404, headers: CORS });
+        return new Response(v4.body, {
           headers: { ...CORS, 'Content-Type': 'application/pdf', 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
         });
       } catch(e) { return json({ error: e.message }, 500); }
