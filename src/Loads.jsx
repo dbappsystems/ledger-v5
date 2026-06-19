@@ -6,8 +6,12 @@
 //   DELETE preserves the 403 ownership message via err.status. The `api` URL
 //   prop is gone; the invoice link uses apiUrl() + a ?t=<token> query.
 //
-// WORKER TODO: /api/invoice/:id GET must also accept ?t=<token> (a plain <a>
-//   link can't send the Authorization header) and resolve the tenant from it.
+// INVOICE PDFs:
+//   VIEW INVOICE PDF regenerates from load data (generateInvoicePDF).
+//   SAVE TO V5 copies a load's legacy V4 stored PDF into the V5 bucket via
+//   POST /api/invoice/:id/save (worker reads R2_V4, writes R2). Uses the
+//   logged-in session token, so the owner taps it right in the app — no file
+//   to open, no second browser.
 //
 // WHITE-LABEL (DONE): this file no longer hardcodes a two-driver BRUCE/TIM
 //   model. The filter tabs, the all-time leaderboard, and per-driver card
@@ -47,10 +51,6 @@ function asArray(val) {
 }
 
 // Darken a #rrggbb hex by a factor (0..1) for the card header background.
-// Replaces the old hardcoded navy(#1A3A5C)/maroon(#2a0a0a) per-driver headers
-// with a deterministic dark shade derived from each driver's own color, so an
-// N-driver tenant gets consistent headers without any name matching. Falls back
-// to a neutral dark slate if the input isn't a valid hex.
 function darkenHex(hex, factor = 0.28) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim())
   if (!m) return '#1A3A5C'
@@ -62,17 +62,14 @@ function darkenHex(hex, factor = 0.28) {
 }
 
 // Parse any date format that exists in this app's data into a Date at
-// local noon (prevents UTC midnight rolling back a day in Central time).
-// Handles: YYYY-MM-DD | MM/DD/YYYY | M/D/YYYY | MM/DD/YY. Never throws.
+// local noon. Handles: YYYY-MM-DD | MM/DD/YYYY | M/D/YYYY | MM/DD/YY.
 function parseAppDate(dateStr) {
   if (!dateStr || typeof dateStr !== 'string') return null
   const s = dateStr.trim()
-  // ISO: YYYY-MM-DD (with or without trailing time)
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
     const d = new Date(s.substring(0,10) + 'T12:00:00')
     return isNaN(d.getTime()) ? null : d
   }
-  // US: M/D/YY or MM/DD/YYYY etc.
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
   if (m) {
     const month = parseInt(m[1], 10)
@@ -100,6 +97,8 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
   const [editData,      setEditData]      = useState(null)
   const [showAchPanel,  setShowAchPanel]  = useState(null)
   const [achReceivedAmt,setAchReceivedAmt]= useState('')
+  const [savingV5,      setSavingV5]      = useState(null)   // loadId currently saving (or 'ALL')
+  const [savedV5,       setSavedV5]       = useState({})     // { [loadId]: true } saved this session
 
   // ── LOAD ACTIONS ──────────────────────────────────────────
   async function patchLoad(load, localIdx, fields) {
@@ -146,11 +145,6 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     setDeleting(true)
     try {
       if (load.id) {
-        // Saved load = part of the accounting system. Delete must be authorized
-        // and confirmed by the worker. Send the logged-in driver so the worker
-        // can enforce ownership (owner can delete any; driver own-only;
-        // bookkeeper none). Do NOT remove the card locally on failure — that
-        // would desync the UI from the accounting record.
         try {
           await apiClient('/api/loads/' + load.id, {
             method: 'DELETE',
@@ -164,7 +158,6 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
         }
         await fetchLoads()
       } else {
-        // Unsaved local-only load (never reached the accounting system).
         setLoads(prev => prev.filter((_,i) => i !== localIdx))
       }
       showToast('Load deleted')
@@ -172,6 +165,54 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
       if (editIdx === localIdx) { setEditIdx(null); setEditData(null) }
     } catch (err) { showToast('Delete failed: ' + err.message) }
     finally { setDeleting(false) }
+  }
+
+  // ── SAVE LEGACY V4 INVOICE INTO V5 ────────────────────────
+  // POST /api/invoice/:id/save — worker reads the stored PDF from the V4 bucket
+  // and writes it into the V5 bucket. Returns {ok,savedBytes} or {ok,alreadyInV5}.
+  // Returns 'saved' | 'already' | 'none' | 'error' so the bulk runner can tally.
+  async function saveOneToV5(load) {
+    if (!load.id) return 'error'
+    try {
+      const res = await apiClient('/api/invoice/' + load.id + '/save', { method: 'POST', json: {} })
+      setSavedV5(prev => ({ ...prev, [load.id]: true }))
+      if (res && res.alreadyInV5) return 'already'
+      return 'saved'
+    } catch (e) {
+      const msg = (e && e.message) ? e.message : ''
+      if (msg.indexOf('No stored V4') !== -1) return 'none'
+      return 'error'
+    }
+  }
+
+  async function saveToV5(load) {
+    if (!load.id) { showToast('Save this load first'); return }
+    setSavingV5(load.id)
+    const r = await saveOneToV5(load)
+    setSavingV5(null)
+    if (r === 'saved')        showToast('Saved to V5!')
+    else if (r === 'already') showToast('Already in V5')
+    else if (r === 'none')    showToast('No V4 file for this load')
+    else                      showToast('Save failed — try again')
+    try { await fetchLoads() } catch {}
+  }
+
+  // Bulk: save every visible load that has a V4 invoice into V5, one by one.
+  async function saveAllVisibleToV5() {
+    const targets = sortedLoads.filter(l => l.id)
+    if (targets.length === 0) { showToast('No saved loads to copy'); return }
+    setSavingV5('ALL')
+    let saved = 0, already = 0, none = 0, error = 0
+    for (const l of targets) {
+      const r = await saveOneToV5(l)
+      if (r === 'saved') saved++
+      else if (r === 'already') already++
+      else if (r === 'none') none++
+      else error++
+    }
+    setSavingV5(null)
+    showToast('V5 copy done — ' + saved + ' saved, ' + already + ' already, ' + none + ' no-file, ' + error + ' failed')
+    try { await fetchLoads() } catch {}
   }
 
   // ── EDIT HELPERS ──────────────────────────────────────────
@@ -210,15 +251,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
   }
 
   // ── CORRECTED PDF ─────────────────────────────────────────
-  // White-label: carrier identity is derived from tenantSettings at the top of
-  // this function (identical to Invoice.jsx), with neutral/blank fallbacks.
   function generateCorrectedPDF(load, data, newNetPay) {
-    // ── WHITE-LABEL CARRIER IDENTITY ──────────────────────
-    // Identical derivation to Invoice.jsx so the corrected invoice shows the
-    // SAME carrier identity as the original. Values come from the tenant's own
-    // settings (migration 0002), resolved from the session token by the worker
-    // and passed from App as tenantSettings. Fallbacks are NEUTRAL/blank — no
-    // client's data lives in code; each tenant's real values live in its row.
     const ts            = tenantSettings || {}
     const coName        = (ts.display_name && ts.display_name.trim())
                           || (ts.legal_name && ts.legal_name.trim())
@@ -320,10 +353,6 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
   }
 
   // ── INVOICE PDF (regenerated from load data) ──────────────
-  // V4 never stored invoice PDFs in R2 — it built them in the browser on demand.
-  // So VIEW INVOICE PDF regenerates from the load's own data (identical layout to
-  // generateCorrectedPDF, minus the CORRECTED markings). Works for every load
-  // with no R2 dependency. Carrier identity comes from tenantSettings.
   function generateInvoicePDF(load) {
     const ts            = tenantSettings || {}
     const coName        = (ts.display_name && ts.display_name.trim())
@@ -435,32 +464,19 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
 
   // ── HELPERS ───────────────────────────────────────────────
   function fmt(n)         { return '$' + (parseFloat(n)||0).toFixed(2) }
-  // RATE CON CHRONOLOGY: the load's accounting date is its DELIVERY DATE.
-  // created_at (entry date) is only a last-resort fallback.
   function loadDate(load) { return load.delivery_date || load.date || load.created_at || null }
   function loadSortTime(load) {
     const d = parseAppDate(loadDate(load))
     return d ? d.getTime() : 0
   }
-  function invoiceHref(load) {
-    if (!load.invoice_url) return null
-    if (load.invoice_url.startsWith('http')) return load.invoice_url
-    // The v5 invoice endpoint is tenant-walled and needs the session token.
-    // A plain <a href> cannot send an Authorization header, so we pass the
-    // token as a query param. WORKER TODO: /api/invoice/:id GET must also
-    // accept ?t=<token> and resolve the tenant from it (in addition to the
-    // Authorization header) for this link to open the PDF directly.
+  // Open the stored PDF (V5, with V4 fallback in the worker) in a new tab.
+  function viewStoredInvoice(load) {
     const t = getToken()
-    return apiUrl(load.invoice_url) + (t ? ('?t=' + encodeURIComponent(t)) : '')
+    const u = apiUrl('/api/invoice/' + load.id) + (t ? ('?t=' + encodeURIComponent(t)) : '')
+    window.open(u, '_blank', 'noopener,noreferrer')
   }
 
   // ── COMPUTED ──────────────────────────────────────────────
-  // WHITE-LABEL LEADERBOARD (N drivers): build one row per tenant driver from
-  // useDrivers().names, totaling each driver's all-time net. The old two-driver
-  // bruceLoads/timLoads/percent/crown block is gone. Money math is untouched —
-  // these are display totals over load.netPay/net_pay only. Each driver also
-  // gets a "share" percent of the grand total for the stacked bar, and the top
-  // earner gets the crown / "IS WINNING!" banner (ties get no crown).
   const leaderboard = driverNames.map(name => {
     const dLoads = loads.filter(l => l.driver === name)
     const total  = dLoads.reduce((s,l) => s + (parseFloat(l.netPay||l.net_pay)||0), 0)
@@ -469,16 +485,10 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
   const grandTotal = leaderboard.reduce((s,d) => s + d.total, 0)
   const rankedBoard = [...leaderboard].sort((a,b) => b.total - a.total)
   const topTotal    = rankedBoard.length ? rankedBoard[0].total : 0
-  // A driver "leads" only if they are the unique maximum (> 0). Ties => no crown.
   const leadersAtTop = rankedBoard.filter(d => d.total === topTotal && topTotal > 0)
   const leaderName   = leadersAtTop.length === 1 ? leadersAtTop[0].name : null
 
-  // Filtered loads honor the active tab. 'all' = every load; otherwise the
-  // selected driver name (which comes from driverNames, so it generalizes).
   const filteredLoads = view === 'all' ? loads : loads.filter(l => l.driver === view)
-  // Display in rate con chronology — newest delivery first.
-  // Sort a copy: loads.indexOf(load) below still resolves against the
-  // original array, so edit/delete/ACH actions are unaffected.
   const sortedLoads       = [...filteredLoads].sort((a,b) => loadSortTime(b) - loadSortTime(a))
   const totalNet          = filteredLoads.reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
   const totalPaid         = filteredLoads.filter(l=>l.status==='paid').reduce((s,l) => s+(parseFloat(l.netPay||l.net_pay)||0), 0)
@@ -501,8 +511,6 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
   }
 
   // ── RENDER ────────────────────────────────────────────────
-  // Tabs: ALL + one per tenant driver. gridTemplateColumns uses repeat() so the
-  // row adapts to however many drivers the tenant has (not a fixed 1fr 1fr 1fr).
   const tabValues = ['all', ...driverNames]
   return (
     <div>
@@ -519,20 +527,26 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
         ))}
       </div>
 
+      {/* Bulk save legacy V4 invoices into V5 for the current view */}
+      <button onClick={saveAllVisibleToV5} disabled={savingV5==='ALL'} style={{
+        display:'block', width:'100%', marginBottom:14, padding:'11px 0', borderRadius:9,
+        border:'1px solid var(--amber)', background: savingV5==='ALL' ? 'var(--navy3)' : 'transparent',
+        color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:800, fontSize:13,
+        letterSpacing:'0.05em', cursor: savingV5==='ALL' ? 'default' : 'pointer',
+      }}>{savingV5==='ALL' ? 'SAVING ALL TO V5…' : '⬇ SAVE ALL V4 INVOICES TO V5 (THIS VIEW)'}</button>
+
       {/* Leaderboard — one row per tenant driver, top earner crowned */}
       <div className="card" style={{ marginBottom:14 }}>
         <div className="section-title" style={{ marginBottom:10 }}>
           LEADERBOARD - ALL TIME
           {leaderName && <span style={{ marginLeft:8, fontSize:12, color:'var(--amber)' }}>{leaderName} IS WINNING!</span>}
         </div>
-        {/* Stacked share bar — one segment per driver, colored by colorFor */}
         <div style={{ display:'flex', height:18, borderRadius:9, overflow:'hidden', marginBottom:10, background:'var(--navy3)' }}>
           {leaderboard.map(d => {
             const pct = grandTotal > 0 ? (d.total / grandTotal) * 100 : (100 / (leaderboard.length || 1))
             return <div key={d.name} style={{ width:pct+'%', background:d.color, transition:'width 0.4s' }} />
           })}
         </div>
-        {/* Driver totals — responsive grid, up to 2 per row */}
         <div style={{ display:'grid', gridTemplateColumns:'repeat(2, 1fr)', gap:10 }}>
           {leaderboard.map(d => (
             <div key={d.name} style={{ background:'var(--navy3)', borderRadius:8, padding:'10px 12px', borderLeft:'3px solid '+d.color }}>
@@ -582,9 +596,10 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
         const subtotal    = basePay + lumperTot + incTot + detention + pallets
         const bolCount    = load.bol_count || (load.bols && load.bols.length) || 0
         const dateObj     = parseAppDate(loadDate(load))
-        const invHref     = invoiceHref(load)
         const achFee      = load.ach_payment ? Math.max(0, netPay - (parseFloat(load.ach_received)||0)) : 0
         const achPreviewFee = achReceivedAmt ? Math.max(0, netPay - (parseFloat(achReceivedAmt)||0)) : 0
+        const isSavingV5  = savingV5 === load.id
+        const isSavedV5   = !!savedV5[load.id]
         // Per-driver colors from the tenant's own list (no name matching).
         const driverColor = colorFor(load.driver)
         const headerBg    = darkenHex(driverColor)
@@ -645,7 +660,18 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
                   <span style={{ fontSize:20, fontFamily:'var(--font-head)', fontWeight:900, color:'var(--navy)' }}>{fmt(netPay)}</span>
                 </div>
               </div>
-              <button onClick={() => generateInvoicePDF(load)} style={{ display:'block', width:'100%', marginTop:10, padding:'8px 0', borderRadius:8, background:'transparent', border:'1px solid var(--amber)', color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, textAlign:'center', cursor:'pointer', letterSpacing:'0.05em' }}>VIEW INVOICE PDF</button>
+              {/* PDF actions: regenerate, view stored (V5/V4), save V4→V5 */}
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10 }}>
+                <button onClick={() => generateInvoicePDF(load)} style={{ padding:'8px 0', borderRadius:8, background:'transparent', border:'1px solid var(--amber)', color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, textAlign:'center', cursor:'pointer', letterSpacing:'0.04em' }}>VIEW INVOICE PDF</button>
+                {load.id && (
+                  <button onClick={() => saveToV5(load)} disabled={isSavingV5} style={{ padding:'8px 0', borderRadius:8, background: isSavedV5 ? '#e8f5e9' : 'transparent', border: isSavedV5 ? '1px solid #2e7d32' : '1px solid var(--navy)', color: isSavedV5 ? '#2e7d32' : 'var(--navy)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, textAlign:'center', cursor: isSavingV5 ? 'default' : 'pointer', letterSpacing:'0.04em' }}>
+                    {isSavingV5 ? 'SAVING…' : (isSavedV5 ? '✓ IN V5' : 'SAVE TO V5')}
+                  </button>
+                )}
+              </div>
+              {load.id && (
+                <button onClick={() => viewStoredInvoice(load)} style={{ display:'block', width:'100%', marginTop:8, padding:'7px 0', borderRadius:8, background:'transparent', border:'1px solid var(--border)', color:'var(--grey)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:11, textAlign:'center', cursor:'pointer', letterSpacing:'0.04em' }}>OPEN STORED PDF</button>
+              )}
               {/* Action buttons */}
               <div style={{ display:'flex', gap:8, marginTop:10, flexWrap:'wrap' }}>
                 {load.status !== 'billed' && load.status !== 'paid' && (
@@ -654,8 +680,6 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
                 {load.status !== 'paid' && (
                   <button className="scan-btn success" style={{ flex:1, padding:'8px 12px', fontSize:12 }} disabled={updating===loadId} onClick={() => { setShowAchPanel(null); setAchReceivedAmt(''); patchLoad(load,localIdx,{status:'paid'}) }}>{updating===loadId?'...':'MARK PAID'}</button>
                 )}
-                {/* ACH (⚡) is available on every unpaid load — white-label: no
-                    per-driver name gate. Per-tenant decision: always-on. */}
                 {load.status !== 'paid' && (
                   <button onClick={() => {
                     if (isAchPanel) { setShowAchPanel(null); setAchReceivedAmt('') }
