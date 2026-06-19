@@ -5,6 +5,7 @@
 # BINDINGS — these names are what worker/index.js reads. Do not rename them:
 #   env.DB              -> D1 database  (load-ledger-v5-db)
 #   env.R2              -> R2 bucket    (load-ledger-v5-files)
+#   env.R2_V4           -> R2 bucket    (load-ledger-files)  [LEGACY, read-only use]
 #   env.ANTHROPIC_API_KEY -> Worker SECRET (set in dashboard, never in this file)
 #
 # NOTE ON database_id: a D1 database_id is an opaque account-scoped identifier,
@@ -29,6 +30,15 @@ database_id = "22bda25f-1827-49fb-84bf-5108b6dac114"
 [[r2_buckets]]
 binding = "R2"                    # worker reads env.R2
 bucket_name = "load-ledger-v5-files"
+
+# -- R2 (LEGACY V4): read-only source for migrating stored invoice PDFs -------
+# The V4 app stored invoice PDFs in this bucket. V5 reads them here as a
+# fallback (when a load's PDF isn't yet in the V5 bucket) and copies them into
+# the V5 bucket on demand via /api/invoice/:id/save. Remove once every legacy
+# invoice has been saved into V5.
+[[r2_buckets]]
+binding = "R2_V4"                 # worker reads env.R2_V4
+bucket_name = "load-ledger-files"
 
 # -- SECRETS (NOT stored here) ------------------------------------------------
 # Set once in the dashboard or via:  wrangler secret put ANTHROPIC_API_KEY
