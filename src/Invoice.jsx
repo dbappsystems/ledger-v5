@@ -4,16 +4,19 @@
 // AUTH MIGRATION: all 3 API calls (OCR, save load, upload PDF) now go through
 // the token api() client. The `api` URL prop is gone.
 //
+// SCAN ROBUSTNESS (2026-06-20):
+//   - isPDF() only routes a file to the PDF.js path when we're CONFIDENT it is a
+//     PDF. iOS can hand images over with an empty file.type; those now default
+//     to the image path, so photo scans never depend on PDF.js loading.
+//   - renderPdfToCanvas() waits briefly for window.pdfjsLib (CDN script can lag
+//     on cellular) before giving up, instead of throwing instantly.
+//
 // WHITE-LABEL (done): the generated invoice PDF carrier identity — company name,
 // contact name, address, MC#/DOT#, contact line, signature, and the PDF filename
 // — now comes from the tenant's own settings (display_name, legal_name,
 // remit_address, mc_number, dot_number, support_email, slug from migration 0002),
 // passed in as the tenantSettings prop and resolved from the session token by the
-// worker. Fallbacks are NEUTRAL/blank — no client's data lives in code; each
-// tenant's real values live in its own row (migration 0002 seeds the default
-// tenant). FLAG: 0002 has no dedicated phone or signature-name column — phone is
-// currently part of the contact line, and the signature reuses the company name.
-// Add remit_phone / remit_contact columns if a per-person signature is wanted.
+// worker. Fallbacks are NEUTRAL/blank — no client's data lives in code.
 
 import { useState, useRef } from 'react'
 import { jsPDF } from 'jspdf'
@@ -46,17 +49,6 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
   const netPay       = subtotal - comdataTotal
 
   // ── WHITE-LABEL CARRIER IDENTITY ─────────────────────────
-  // Every value comes from the tenant's own settings (migration 0002), resolved
-  // from the session token by the worker and passed down from App as
-  // tenantSettings. Fallbacks are now NEUTRAL/blank — no client's data lives in
-  // code. Each tenant's real invoice identity (name, address, MC/DOT, contact)
-  // lives in its own tenant row (migration 0002 seeds the default tenant; new
-  // tenants fill these in at signup). A blank field renders blank, never another
-  // company's info.
-  //   NOTE: 0002 has no dedicated phone or signature-name column yet. Phone is
-  //   folded into support_email's contact line by the tenant; the signature uses
-  //   legal_name/display_name. Flagged so a dedicated remit_contact/remit_phone
-  //   field can be added when needed.
   const ts            = tenantSettings || {}
   const coName        = (ts.display_name && ts.display_name.trim())
                         || (ts.legal_name && ts.legal_name.trim())
@@ -74,17 +66,40 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
                         : ''
   const coContactLine = (ts.support_email && ts.support_email.trim())
                         || ''
-  // Signature: a person/company sign-off. No dedicated column yet -> use the
-  // company legal/display name; blank if the tenant hasn't set one.
   const coSignature   = (ts.legal_name && ts.legal_name.trim())
                         || (ts.display_name && ts.display_name.trim())
                         || ''
-  // Filename prefix: tenant slug if present, else neutral 'Invoice'.
   const filePrefix    = (ts.slug && ts.slug.trim()) ? ts.slug.trim() : 'Invoice'
 
   function fmt(n) { return '$' + n.toFixed(2) }
   function openScanner(mode) { scanMode.current = mode; fileRef.current.click() }
-  function isPDF(file) { return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf') }
+
+  // Only treat a file as a PDF when we're CONFIDENT it is one. iOS sometimes
+  // hands images over with an empty file.type; defaulting those to the image
+  // path keeps photo scans off the PDF.js dependency entirely.
+  function isPDF(file) {
+    const type = (file && file.type) ? file.type.toLowerCase() : ''
+    const name = (file && file.name) ? file.name.toLowerCase() : ''
+    if (type) return type === 'application/pdf'  // trust an explicit content type
+    return name.endsWith('.pdf')                 // only fall back to extension
+  }
+
+  // Wait briefly for the PDF.js CDN script (it can lag on cellular) before
+  // giving up, instead of throwing the instant a tap lands before it's ready.
+  async function waitForPdfJs(maxMs = 4000) {
+    if (window.pdfjsLib) return window.pdfjsLib
+    const step = 150
+    let waited = 0
+    while (waited < maxMs) {
+      await new Promise(r => setTimeout(r, step))
+      waited += step
+      if (window.pdfjsLib) {
+        if (window.__configurePdfJs) window.__configurePdfJs()
+        return window.pdfjsLib
+      }
+    }
+    return null
+  }
 
   // ── MANUAL ADD HANDLERS ──────────────────────────────────
   function addManualLumper() {
@@ -113,8 +128,8 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
 
   // ── RENDER PDF PAGE 1 TO CANVAS ──────────────────────────
   async function renderPdfToCanvas(file) {
-    const pdfjsLib = window.pdfjsLib
-    if (!pdfjsLib) throw new Error('PDF.js not loaded')
+    const pdfjsLib = await waitForPdfJs()
+    if (!pdfjsLib) throw new Error('PDF reader still loading — try again, or use a photo of the page')
     const arrayBuf = await file.arrayBuffer()
     const pdf      = await pdfjsLib.getDocument({ data: arrayBuf }).promise
     const page     = await pdf.getPage(1)
@@ -222,10 +237,10 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     } else {
       canvas = await new Promise((resolve, reject) => {
         const reader = new FileReader()
-        reader.onerror = reject
+        reader.onerror = () => reject(new Error('Could not read the image file'))
         reader.onload = (ev) => {
           const img = new Image()
-          img.onerror = reject
+          img.onerror = () => reject(new Error('Could not decode the image'))
           img.onload = () => {
             const MAX = 1200
             let w = img.naturalWidth  || img.width  || 800
@@ -261,7 +276,7 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
       setLoad(p => ({ ...p, bols: [...p.bols, ...processed] }))
       showToast('✅ ' + processed.length + ' BOL(s) added')
     } catch (err) {
-      showToast('❌ BOL scan failed')
+      showToast('❌ BOL scan failed: ' + (err && err.message ? err.message.slice(0, 70) : 'unknown'))
       console.error(err)
     } finally {
       setBolLoading(false)
@@ -309,9 +324,9 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
       if (mode === 'express')    setLoad(p => ({ ...p, comdatas:    [...p.comdatas,    item] }))
       showToast('✅ Receipt scanned! $' + amount)
     } catch (err) {
-      // Show the REAL reason. api() now surfaces the worker's error label +
-      // detail (auth, credits, model, rate limit, network) in err.message, so
-      // a failed scan names itself instead of a generic line.
+      // Show the REAL reason. api() surfaces the worker's error label + detail
+      // (auth, credits, model, rate limit, network); local errors (image/pdf
+      // read) surface their own message.
       const reason = (err && (err.detail || err.message))
         ? String(err.detail || err.message).slice(0, 110)
         : 'unknown error'
@@ -408,7 +423,6 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     doc.text(coLegalName, M, y)
     doc.setFont('helvetica','normal')
     doc.text(coAddress, M, y+12)
-    // MC# (+ optional DOT#) on one line, then the contact line beneath it.
     const idLine = coDot ? (coMc + '  ' + coDot) : coMc
     doc.text(idLine, M, y+24)
     doc.text(coContactLine, M, y+36)
@@ -514,8 +528,6 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
       addScanPage(doc, l, 'Comdata / Express Code '+(i+1)+' - $'+parseFloat(l.amount).toFixed(2)+' - '+l.label))
 
     // ── STEP 3: UPLOAD PDF TO R2 BEFORE DOWNLOAD ─────────
-    // R2 upload must complete before doc.save() fires
-    // doc.save() triggers the phone download which drops subsequent fetches
     const filename = filePrefix+'-'+(load.load_number||'draft')+'-'+driver+'.pdf'
     try {
       const pdfBase64 = doc.output('datauristring').split(',')[1]
