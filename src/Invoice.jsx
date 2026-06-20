@@ -4,14 +4,21 @@
 // AUTH MIGRATION: all 3 API calls (OCR, save load, upload PDF) now go through
 // the token api() client. The `api` URL prop is gone.
 //
-// SCAN ROBUSTNESS (2026-06-20):
-//   - sniffIsPdf() reads the file's first bytes and only treats it as a PDF when
-//     they are the literal "%PDF-" signature. iOS file types/names are
-//     unreliable; bytes are not. A photo can NEVER be misrouted to PDF.js now.
-//   - PDF.js is only ever touched for true PDFs. Photo receipt scans (the normal
-//     flow) do not depend on the PDF.js CDN at all.
-//   - mediaType sent to the worker is derived the same way, so the OCR call
-//     always declares the correct content type.
+// SCAN ROBUSTNESS (2026-06-20, v2):
+//   The receipt scanner now mirrors the PROVEN RateCon flow:
+//     1. OCR runs FIRST on the ORIGINAL file bytes (exactly like RateCon).
+//        This is the step that extracts the amount, and it never depends on
+//        PDF.js or the B&W canvas pipeline.
+//     2. The B&W image build (processFile) runs AFTER, wrapped in its own
+//        try/catch. If it fails (e.g. PDF.js still loading), the receipt is
+//        STILL saved with the scanned amount — just without a thumbnail image.
+//   Result: a scan can never be blocked by the image pipeline. If OCR returns
+//   an amount, the scan succeeds. This is why RateCon always worked and the
+//   receipt scanner did not — the old code ran processFile() BEFORE the OCR
+//   call, so a PDF.js hiccup killed the scan before it ever reached the API.
+//
+//   sniffIsPdf() still decides PDF vs image by the file's real first bytes
+//   ("%PDF-"), since iOS type/name are unreliable.
 //
 // WHITE-LABEL (done): the generated invoice PDF carrier identity — company name,
 // contact name, address, MC#/DOT#, contact line, signature, and the PDF filename
@@ -294,6 +301,12 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
   }
 
   // ── RECEIPT SCANNER ──────────────────────────────────────
+  // PROVEN FLOW (mirrors RateCon, which always worked):
+  //   1) OCR the ORIGINAL file bytes first — this is what gets the amount and
+  //      it never touches PDF.js / the B&W pipeline.
+  //   2) Build the B&W receipt image SEPARATELY and NON-BLOCKINGLY. If that
+  //      step fails, we still save the receipt with its amount, just with no
+  //      thumbnail. The scan can never be killed by the image pipeline again.
   async function handleFile(e) {
     const file = e.target.files[0]
     if (!file) return
@@ -301,19 +314,17 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     setScanning(mode)
     showToast('📡 Scanning receipt...')
     try {
-      // Decide PDF vs image ONCE, by bytes, and reuse for both the local render
-      // and the media type we send to the worker.
+      // Decide PDF vs image ONCE, by bytes.
       const isPdf     = await sniffIsPdf(file)
-      const scanned   = await processFile(file, isPdf)
-      const base64    = await toBase64(file)
       const mediaType = isPdf ? 'application/pdf' : (file.type || 'image/jpeg')
-      const json = await apiClient('/api/ocr', {
+
+      // ── STEP 1: OCR FIRST (exactly like RateCon) ──────────
+      const base64 = await toBase64(file)
+      const json   = await apiClient('/api/ocr', {
         method: 'POST',
         json:   { base64, mediaType, mode },
       })
-      // api() throws on any non-200 with the real reason preserved in
-      // err.message / err.detail, so reaching here means HTTP 200. Still guard
-      // the body in case the worker returned a 200 with an error field.
+      // api() throws on any non-200 with the real reason in err.message/err.detail.
       if (json && json.error) throw new Error(json.detail || json.error)
 
       let raw = json.result || ''
@@ -325,7 +336,19 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
       const parsed = JSON.parse(raw.substring(start, end + 1))
       const amount = parsed.amount || '0.00'
 
-      const item = { amount, label: file.name, dataUrl: scanned.dataUrl, base64: scanned.base64, w: scanned.w, h: scanned.h }
+      // ── STEP 2: BUILD RECEIPT IMAGE — NON-BLOCKING ────────
+      // The amount is already secured. Image processing is a nice-to-have for
+      // the attached receipt page; if it fails, save the amount anyway.
+      let img = { dataUrl: null, base64: null, w: 0, h: 0 }
+      try {
+        const scanned = await processFile(file, isPdf)
+        img = { dataUrl: scanned.dataUrl, base64: scanned.base64, w: scanned.w, h: scanned.h }
+      } catch (imgErr) {
+        console.error('Receipt image processing failed (amount still saved):', imgErr)
+        showToast('⚠️ Amount captured — receipt image skipped')
+      }
+
+      const item = { amount, label: file.name, dataUrl: img.dataUrl, base64: img.base64, w: img.w, h: img.h }
 
       if (mode === 'lumper')     setLoad(p => ({ ...p, lumpers:     [...p.lumpers,     item] }))
       if (mode === 'incidental') setLoad(p => ({ ...p, incidentals: [...p.incidentals, item] }))
