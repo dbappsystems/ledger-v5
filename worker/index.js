@@ -77,6 +77,25 @@ async function getV4Invoice(env, loadId) {
   }
 }
 
+// Legacy V4 also served maintenance and fuel receipt images/PDFs from its own
+// public worker at /api/maintenance-receipt/{id} and /api/fuel-receipt/{id}.
+// When a receipt has not yet been copied into the V5 bucket, fall back to the
+// V4 worker URL so the receipt still displays. Same proven pattern as invoices.
+// `kind` is 'maintenance-receipt' or 'fuel-receipt'.
+async function getV4Receipt(kind, id) {
+  try {
+    const res = await fetch(V4_BASE + '/api/' + kind + '/' + id);
+    if (!res.ok) return null;
+    const ct = res.headers.get('content-type') || '';
+    if (ct.indexOf('image') === -1 && ct.indexOf('pdf') === -1) return null;
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength < 500) return null;
+    return { body: buf, contentType: ct };
+  } catch (_) {
+    return null;
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url  = new URL(request.url);
@@ -564,9 +583,16 @@ export default {
         let object = await env.R2.get(T + '/maintenance/' + entryId + '.pdf');
         let contentType = 'application/pdf';
         if (!object) { object = await env.R2.get(T + '/maintenance/' + entryId + '.jpg'); contentType = 'image/jpeg'; }
-        if (!object) return new Response('Receipt not found', { status: 404, headers: CORS });
-        return new Response(object.body, {
-          headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
+        if (object) {
+          return new Response(object.body, {
+            headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
+          });
+        }
+        // V5 bucket has nothing yet — fall back to the legacy V4 receipt URL.
+        const v4 = await getV4Receipt('maintenance-receipt', entryId);
+        if (!v4) return new Response('Receipt not found', { status: 404, headers: CORS });
+        return new Response(v4.body, {
+          headers: { ...CORS, 'Content-Type': v4.contentType || 'image/jpeg', 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
         });
       } catch(e) { return json({ error: e.message }, 500); }
     }
@@ -837,9 +863,16 @@ export default {
         let object = await env.R2.get(T + '/fuel/' + entryId + '.jpg');
         let contentType = 'image/jpeg';
         if (!object) { object = await env.R2.get(T + '/fuel/' + entryId + '.pdf'); contentType = 'application/pdf'; }
-        if (!object) return new Response('Receipt not found', { status: 404, headers: CORS });
-        return new Response(object.body, {
-          headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
+        if (object) {
+          return new Response(object.body, {
+            headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
+          });
+        }
+        // V5 bucket has nothing yet — fall back to the legacy V4 receipt URL.
+        const v4 = await getV4Receipt('fuel-receipt', entryId);
+        if (!v4) return new Response('Receipt not found', { status: 404, headers: CORS });
+        return new Response(v4.body, {
+          headers: { ...CORS, 'Content-Type': v4.contentType || 'image/jpeg', 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
         });
       } catch(e) { return json({ error: e.message }, 500); }
     }
