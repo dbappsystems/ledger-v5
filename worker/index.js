@@ -261,12 +261,25 @@ export default {
         const res = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST', headers,
           body: JSON.stringify({
-            model: 'claude-sonnet-4-6', max_tokens: 1024,
+            model: 'claude-sonnet-4-5-20250929', max_tokens: 1024,
             messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }],
           }),
         });
         const raw = await res.text();
-        if (!res.ok) return json({ error: 'Claude API error', status: res.status, detail: raw }, 502);
+        if (!res.ok) {
+          // Surface Anthropic's real error type + message so the failure names
+          // itself on the phone, instead of a truncated raw blob.
+          let etype = '', emsg = '';
+          try {
+            const ej = JSON.parse(raw);
+            etype = ej?.error?.type    || '';
+            emsg  = ej?.error?.message || '';
+          } catch {}
+          const detail = (etype || emsg)
+            ? (etype + (emsg ? (': ' + emsg) : ''))
+            : raw.slice(0, 300);
+          return json({ error: 'Claude API error', status: res.status, type: etype, detail }, 502);
+        }
         const data = JSON.parse(raw);
         return json({ result: data?.content?.[0]?.text ?? '' });
       } catch (e) {
