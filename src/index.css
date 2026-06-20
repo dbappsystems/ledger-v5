@@ -136,6 +136,44 @@ input::placeholder, textarea::placeholder { color: var(--grey); }
   margin-bottom: 12px;
 }
 
+/* -- Accounting amount rows (label left, value right) ---------
+   SettlementReport.jsx and the other ledger views render every
+   money line as <div class="amount-row"><span class="label">…</span>
+   <span class="value">…</span></div>. These classes were missing,
+   so the rows collapsed and the numbers ran into the labels. This
+   restores a clean two-column ledger: description hard-left, dollar
+   amount hard-right, digits in a fixed-width column. Inline colors
+   set in the JSX (amber/green/red) still win — only layout is set here. */
+.amount-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(30, 58, 92, 0.4);
+}
+.amount-row:last-child { border-bottom: none; }
+.amount-row .label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.3;
+  color: var(--white);
+  text-align: left;
+}
+.amount-row .value {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-family: var(--font-head);
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1.3;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 /* -- Empty state ---------------------------------------------- */
 .empty-state {
   text-align: center;
