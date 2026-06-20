@@ -1,6 +1,8 @@
 // worker/index.js
 // (c) dbappsystems.com | daddyboyapps.com
 // Load Ledger V5 — Cloudflare Worker — MULTI-TENANT
+// OCR model: claude-sonnet-4-6 — matches the proven-working V4 worker. Do not
+// change to a dated 4.5 snapshot; V4 confirms 4-6 is valid on this API key.
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -261,7 +263,7 @@ export default {
         const res = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST', headers,
           body: JSON.stringify({
-            model: 'claude-sonnet-4-5-20250929', max_tokens: 1024,
+            model: 'claude-sonnet-4-6', max_tokens: 1024,
             messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }],
           }),
         });
@@ -375,9 +377,6 @@ export default {
     }
 
     // ── SAVE LEGACY V4 INVOICE INTO V5 (fetch V4 URL -> R2) ──────────────
-    // POST /api/invoice/:id/save — owner/bookkeeper, or the load's own driver.
-    // Pulls the stored PDF from the legacy V4 worker URL and writes it into the
-    // V5 tenant-namespaced bucket, then stamps invoice_url. Idempotent.
     if (path.startsWith('/api/invoice/') && path.endsWith('/save') && request.method === 'POST') {
       try {
         const loadId = path.slice('/api/invoice/'.length, -('/save'.length));
@@ -615,13 +614,10 @@ export default {
             headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
           });
         }
-        // DIAGNOSTIC: if ?diag=1, return the raw V4 fetch outcome as JSON instead
-        // of serving the image, so we can see exactly why the fallback yields null.
         if (url.searchParams.get('diag') === '1') {
           const d = await diagV4Receipt('maintenance-receipt', entryId);
           return json({ diag: true, entryId, v4base: V4_BASE, result: d });
         }
-        // V5 bucket has nothing yet — fall back to the legacy V4 receipt URL.
         const v4 = await getV4Receipt('maintenance-receipt', entryId);
         if (!v4) return new Response('Receipt not found', { status: 404, headers: CORS });
         return new Response(v4.body, {
@@ -901,7 +897,6 @@ export default {
             headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
           });
         }
-        // V5 bucket has nothing yet — fall back to the legacy V4 receipt URL.
         const v4 = await getV4Receipt('fuel-receipt', entryId);
         if (!v4) return new Response('Receipt not found', { status: 404, headers: CORS });
         return new Response(v4.body, {
