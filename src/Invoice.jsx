@@ -288,13 +288,16 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
         method: 'POST',
         json:   { base64, mediaType, mode },
       })
-      if (json.error) throw new Error(json.detail || json.error)
+      // api() now throws on any non-200 with the real reason preserved in
+      // err.message / err.detail, so reaching here means HTTP 200. Still guard
+      // the body in case the worker returned a 200 with an error field.
+      if (json && json.error) throw new Error(json.detail || json.error)
 
       let raw = json.result || ''
       raw = raw.replace(/```json/gi,'').replace(/```/gi,'').trim()
       const start = raw.indexOf('{')
       const end   = raw.lastIndexOf('}')
-      if (start === -1 || end === -1) throw new Error('No data found')
+      if (start === -1 || end === -1) throw new Error('Document read OK but no amount found — add it manually')
 
       const parsed = JSON.parse(raw.substring(start, end + 1))
       const amount = parsed.amount || '0.00'
@@ -306,8 +309,14 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
       if (mode === 'express')    setLoad(p => ({ ...p, comdatas:    [...p.comdatas,    item] }))
       showToast('✅ Receipt scanned! $' + amount)
     } catch (err) {
-      showToast('❌ Scan failed — add amount manually')
-      console.error(err)
+      // Show the REAL reason. api() now surfaces the worker's error label +
+      // detail (auth, credits, model, rate limit, network) in err.message, so
+      // a failed scan names itself instead of a generic line.
+      const reason = (err && (err.detail || err.message))
+        ? String(err.detail || err.message).slice(0, 110)
+        : 'unknown error'
+      showToast('❌ ' + reason)
+      console.error('OCR scan error:', err)
     } finally {
       setScanning(null)
       e.target.value = ''
