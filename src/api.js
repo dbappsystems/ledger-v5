@@ -97,8 +97,25 @@ export async function api(path, opts = {}) {
   let data;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
   if (!res.ok) {
-    const msg = (data && data.error) ? data.error : ('Request failed (' + res.status + ')');
-    throw new ApiError(res.status, msg);
+    // Build the most specific message available. The worker may return BOTH
+    // an `error` (short label) and a `detail` (the real reason, e.g. the
+    // Anthropic error type/message from /api/ocr). Combine them so the cause
+    // actually reaches the caller's catch instead of being discarded, and
+    // attach the structured fields to the thrown error for callers that read
+    // them directly (e.g. the OCR scanner reads err.detail).
+    let label = '', detail = '';
+    if (data && typeof data === 'object') {
+      label  = data.error  || '';
+      detail = data.detail || '';
+    } else if (typeof data === 'string') {
+      detail = data;
+    }
+    const combined = [label, detail].filter(Boolean).join(' — ')
+      || ('Request failed (' + res.status + ')');
+    const apiErr = new ApiError(res.status, combined);
+    apiErr.detail = detail;   // raw reason, preserved
+    apiErr.label  = label;    // short label, preserved
+    throw apiErr;
   }
   return data;
 }
@@ -109,7 +126,7 @@ export async function api(path, opts = {}) {
 export function apiUrl(path) { return API_BASE + path; }
 
 export class ApiError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message) { super(message); this.status = status; this.detail = ''; this.label = ''; }
 }
 
 export { API_BASE };
