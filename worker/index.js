@@ -1198,6 +1198,83 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
+    // ── RECURRING CHARGES (insurance, plates, payment plans) ─────────────
+    // Standing per-week carrier deductions. Mirrors carrier_advances exactly:
+    // GET list by driver; POST create; PATCH update; DELETE. Owner/bookkeeper
+    // only for writes. The settlement math (recurringChargesForWeek) slices
+    // monthly charges to the week and applies the start/end date window.
+    if (path.startsWith('/api/recurring-charges/') && request.method === 'GET') {
+      try {
+        const driver = path.split('/')[3].toUpperCase();
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM recurring_charges WHERE tenant_id=? AND driver=? ORDER BY active DESC, charge_type ASC, created_at DESC LIMIT 500'
+        ).bind(T, driver).all();
+        return json(results);
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    if (path === '/api/recurring-charge' && request.method === 'POST') {
+      try {
+        if (ctx.role !== 'owner' && ctx.role !== 'bookkeeper') return json({ error: 'Not authorized' }, 403);
+        const b = await request.json();
+        if (!b.driver) return json({ error: 'Missing driver' }, 400);
+        const amount = parseFloat(b.amount);
+        if (!amount || amount <= 0) return json({ error: 'Invalid amount' }, 400);
+        const allowedTypes = ['insurance','plates','payment_plan','other'];
+        const chargeType = allowedTypes.includes(b.charge_type) ? b.charge_type : 'other';
+        const cadence = (b.cadence === 'monthly') ? 'monthly' : 'weekly';
+        const id = crypto.randomUUID();
+        await env.DB.prepare(`
+          INSERT INTO recurring_charges
+            (id, tenant_id, driver, charge_type, label, amount, cadence, start_date, end_date, notes, active, created_at, updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,1,datetime('now'),datetime('now'))
+        `).bind(
+          id, T, b.driver.toUpperCase(), chargeType,
+          (b.label || '').toString().slice(0, 120),
+          amount, cadence,
+          b.start_date || '', b.end_date || '',
+          (b.notes || '').toString().slice(0, 500),
+        ).run();
+        return json({ id });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    if (path.startsWith('/api/recurring-charge/') && path.split('/').length === 4 && request.method === 'PATCH') {
+      try {
+        if (ctx.role !== 'owner' && ctx.role !== 'bookkeeper') return json({ error: 'Not authorized' }, 403);
+        const id = path.split('/')[3];
+        const b = await request.json();
+        const fields = []; const values = [];
+        if (b.charge_type !== undefined) {
+          const allowedTypes = ['insurance','plates','payment_plan','other'];
+          fields.push('charge_type=?'); values.push(allowedTypes.includes(b.charge_type) ? b.charge_type : 'other');
+        }
+        if (b.label       !== undefined) { fields.push('label=?');       values.push(String(b.label).slice(0, 120)); }
+        if (b.amount      !== undefined) { fields.push('amount=?');      values.push(parseFloat(b.amount) || 0); }
+        if (b.cadence     !== undefined) { fields.push('cadence=?');     values.push(b.cadence === 'monthly' ? 'monthly' : 'weekly'); }
+        if (b.start_date  !== undefined) { fields.push('start_date=?');  values.push(String(b.start_date)); }
+        if (b.end_date    !== undefined) { fields.push('end_date=?');    values.push(String(b.end_date)); }
+        if (b.notes       !== undefined) { fields.push('notes=?');       values.push(String(b.notes).slice(0, 500)); }
+        if (b.active      !== undefined) { fields.push('active=?');      values.push(b.active ? 1 : 0); }
+        if (fields.length === 0) return json({ error: 'Nothing to update' }, 400);
+        fields.push("updated_at=datetime('now')");
+        values.push(id, T);
+        await env.DB.prepare('UPDATE recurring_charges SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
+        return json({ ok: true });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    if (path.startsWith('/api/recurring-charge/') && path.split('/').length === 4 && request.method === 'DELETE') {
+      try {
+        if (ctx.role !== 'owner' && ctx.role !== 'bookkeeper') return json({ error: 'Not authorized' }, 403);
+        const id = path.split('/')[3];
+        const row = await env.DB.prepare('SELECT id FROM recurring_charges WHERE id=? AND tenant_id=?').bind(id, T).first();
+        if (!row) return json({ error: 'Charge not found' }, 404);
+        await env.DB.prepare('DELETE FROM recurring_charges WHERE id=? AND tenant_id=?').bind(id, T).run();
+        return json({ ok: true });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
     if (path === '/api/contact' && request.method === 'POST') {
       try {
         const b = await request.json();
