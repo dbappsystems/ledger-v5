@@ -4,10 +4,10 @@
 //
 // WHAT THIS IS
 //   A read-only driver pay stub for one settlement week, built from data that
-//   already exists (loads, fuel_entries, carrier_advances). It reuses the SAME
-//   math as settlementMath.js so the numbers tie to billing — this view never
-//   writes anything and never changes the running balance. It cannot break
-//   billing; it only reads and arranges.
+//   already exists (loads, fuel_entries, carrier_advances, recurring_charges).
+//   It reuses the SAME math as settlementMath.js so the numbers tie to billing
+//   — this view never writes anything and never changes the running balance. It
+//   cannot break billing; it only reads and arranges.
 //
 // PRESENTATION: a pay document, not a dashboard. ALL fonts are plain black.
 //   No red/amber/green. Deductions are shown with a leading minus sign, not
@@ -17,6 +17,14 @@
 //   Monday -> Monday, cutoff end of day Monday. A load counts in the week that
 //   its anchor date falls into; PAID on that closing Monday. Anchor date today
 //   is the load's billed/delivery date (loadDate from settlementMath).
+//
+// RECURRING CHARGES (2026-06-20): insurance, plate (IRP) installments, and
+//   payment plans now render as REAL deduction lines, replacing the old
+//   "coming next" placeholder. Each active recurring_charges row is sliced to
+//   this settlement week by settlementMath.recurringChargesForWeek (monthly
+//   charges are pro-rated to a weekly amount; the start/end date window is
+//   applied against the week's pay date). The italic placeholder shows ONLY
+//   when this driver has no recurring charges configured yet.
 //
 // SCROLL / OVERLAY POSITIONING (2026-06-20, v4 — THE REAL FIX):
 //   The previous versions rendered this fixed overlay INSIDE App's
@@ -36,7 +44,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { api as apiClient } from './api.js'
 import {
-  normalizeOwnerCut, parseAppDate, loadDate, calcPay,
+  normalizeOwnerCut, parseAppDate, loadDate, calcPay, recurringChargesForWeek,
 } from './settlementMath'
 
 function fmt(n) { return '$' + (parseFloat(n) || 0).toFixed(2) }
@@ -74,20 +82,23 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
   const [weekOffset, setWeekOffset] = useState(0)
   const [fuelEntries, setFuelEntries] = useState([])
   const [carrierAdvances, setCarrierAdvances] = useState([])
+  const [recurringCharges, setRecurringCharges] = useState([])
   const [loading, setLoading] = useState(true)
 
-  // Pull this driver's fuel + advances once (read-only).
+  // Pull this driver's fuel + advances + recurring charges once (read-only).
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
-        const [fuel, adv] = await Promise.all([
+        const [fuel, adv, recur] = await Promise.all([
           apiClient('/api/fuel/' + driverName).catch(() => []),
           apiClient('/api/carrier-advances/' + driverName).catch(() => []),
+          apiClient('/api/recurring-charges/' + driverName).catch(() => []),
         ])
         if (cancelled) return
         setFuelEntries(Array.isArray(fuel) ? fuel : [])
         setCarrierAdvances(Array.isArray(adv) ? adv : [])
+        setRecurringCharges(Array.isArray(recur) ? recur : [])
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -147,11 +158,27 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
       }))
     const advanceTotal = advanceRows.reduce((s, r) => s + r.amount, 0)
 
-    const totalDeductions = fleetFuelTotal + advanceTotal
+    // RECURRING CHARGES — insurance / plates / payment plans, sliced to this
+    // week by the shared settlement math (monthly charges pro-rated to weekly,
+    // start/end window judged on the week's pay date). `hasRecurring` tells the
+    // UI whether to show the live lines or the "coming next" placeholder.
+    const recurring = recurringChargesForWeek(recurringCharges, driverName, week.payDate)
+    const recurringRows = recurring.rows
+    const recurringTotal = recurring.total
+    const hasRecurring = (Array.isArray(recurringCharges) ? recurringCharges : [])
+      .some(c => (c.driver || '').toUpperCase() === driverName.toUpperCase())
+
+    const totalDeductions = fleetFuelTotal + advanceTotal + recurringTotal
     const netPay = driverGross - totalDeductions
 
-    return { payRows, driverGross, fleetFuelRows, fleetFuelTotal, advanceRows, advanceTotal, totalDeductions, netPay }
-  }, [loads, driverName, week, cut, fuelEntries, carrierAdvances])
+    return {
+      payRows, driverGross,
+      fleetFuelRows, fleetFuelTotal,
+      advanceRows, advanceTotal,
+      recurringRows, recurringTotal, hasRecurring,
+      totalDeductions, netPay,
+    }
+  }, [loads, driverName, week, cut, fuelEntries, carrierAdvances, recurringCharges])
 
   // -- STYLES (paystub look: white sheet, plain BLACK text throughout) -------
   const INK = '#111'
@@ -245,12 +272,28 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
                 </div>
               ))}
 
-              <div style={{ ...row, color:MUTE, fontStyle:'italic', fontSize:12 }}>
-                <span>Recurring charges (insurance, plates, payment plans) — coming next</span>
-                <span style={{ ...rightAmt, color:MUTE }}>—</span>
-              </div>
+              {/* RECURRING CHARGES — live lines (insurance, plates, payment plans). */}
+              {stub.recurringRows.map((r, i) => (
+                <div key={'r'+i} style={row}>
+                  <div>
+                    <strong>{r.label}</strong>
+                    <div style={{ fontSize:11, color:MUTE }}>
+                      {r.cadence === 'monthly' ? 'Monthly charge, weekly share' : 'Weekly recurring charge'}
+                    </div>
+                  </div>
+                  <div style={rightAmt}>-{fmt(r.amount)}</div>
+                </div>
+              ))}
 
-              {stub.fleetFuelRows.length === 0 && stub.advanceRows.length === 0 && (
+              {/* Placeholder shows ONLY when this driver has no recurring charges set up yet. */}
+              {!stub.hasRecurring && (
+                <div style={{ ...row, color:MUTE, fontStyle:'italic', fontSize:12 }}>
+                  <span>Recurring charges (insurance, plates, payment plans) — none set up</span>
+                  <span style={{ ...rightAmt, color:MUTE }}>—</span>
+                </div>
+              )}
+
+              {stub.fleetFuelRows.length === 0 && stub.advanceRows.length === 0 && stub.recurringRows.length === 0 && (
                 <div style={{ ...row, color:MUTE, justifyContent:'center' }}>No deductions this week.</div>
               )}
               <div style={totalRow}><span>TOTAL DEDUCTIONS</span><span>-{fmt(stub.totalDeductions)}</span></div>
