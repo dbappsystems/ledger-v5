@@ -11,45 +11,29 @@
 //
 // PRESENTATION: a pay document, not a dashboard. ALL fonts are plain black.
 //   No red/amber/green. Deductions are shown with a leading minus sign, not
-//   color. The net line is black bold. This is intentional — a paystub should
-//   read like a printed settlement sheet.
-//
-// THE STUB (top to bottom), exactly as a driver expects a paystub:
-//
-//   DRIVER PAY
-//     • one line per load: Load #  | Load Total (net_pay billed)  | Driver %  -> $ out right
-//     • Fuel Surcharge under the load (load.fuel) when > 0
-//     • Detention / extra pay under it (load.detention) when > 0
-//     = DRIVER GROSS PAY
-//
-//   CARRIER DEDUCTIONS
-//     • Fleet Fuel Card (fuel_entries, type 'fleet', this week)
-//     • Advances — referenced to their note/reason, with remaining balance
-//     • [Recurring carrier charges — insurance lines, plate installment,
-//        payment arrangements — NOT yet stored anywhere; shown as a clearly
-//        labeled, ready section so the layout is complete and we can wire real
-//        storage next. Nothing is invented here.]
-//     = TOTAL DEDUCTIONS
-//
-//   NET DRIVER PAY = DRIVER GROSS - TOTAL DEDUCTIONS
+//   color. The net line is black bold.
 //
 // SETTLEMENT WEEK
 //   Monday -> Monday, cutoff end of day Monday. A load counts in the week that
-//   its anchor date falls into, where the week runs Tuesday 00:00 .. the
-//   following Monday 23:59 and is PAID on that closing Monday. Anchor date today
-//   is the load's billed/delivery date (loadDate from settlementMath) because
-//   that is the only billing-completion date the schema currently has; when a
-//   dedicated bill date is added, swap weekAnchorDate() to use it — one line.
+//   its anchor date falls into; PAID on that closing Monday. Anchor date today
+//   is the load's billed/delivery date (loadDate from settlementMath).
 //
-// SCROLL (2026-06-20, v3): the overlay is a fixed, NON-scrolling flex column.
-//   The header bar is a fixed top row (always visible); a single inner area
-//   scrolls beneath it. There is NO JavaScript that forces the scroll position,
-//   so nothing fights the user's finger — the earlier scroll-to-top effect was
-//   what caused the content to spring back and hide the top on release. Native
-//   scrolling only; safe-area top padding clears the notch/URL bar; overscroll
-//   containment stops the page behind from stealing the gesture.
+// SCROLL / OVERLAY POSITIONING (2026-06-20, v4 — THE REAL FIX):
+//   The previous versions rendered this fixed overlay INSIDE App's
+//   `.tab-content`, which is an `overflow-y:auto` + `-webkit-overflow-scrolling:
+//   touch` scroll container. On iOS WebKit, a position:fixed element nested
+//   inside such a scroller is CLIPPED to that scroller's box instead of the
+//   viewport — so the overlay sat between the app header and the tab bar, its
+//   own top (DRIVER SETTLEMENT / week navigator) pushed out of view, and it
+//   sprang back when released. No amount of internal flex/scroll tuning could
+//   fix it because the container itself was clipping us.
+//   FIX: render the overlay through a React portal into document.body, so it is
+//   NOT a descendant of `.tab-content` and position:fixed anchors to the real
+//   viewport. Inside, it's a fixed non-scrolling flex column: a header row that
+//   never moves + one scrollable body beneath it. Native scroll only.
 
 import { useState, useEffect, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { api as apiClient } from './api.js'
 import {
   normalizeOwnerCut, parseAppDate, loadDate, calcPay,
@@ -58,23 +42,13 @@ import {
 function fmt(n) { return '$' + (parseFloat(n) || 0).toFixed(2) }
 
 // -- SETTLEMENT WEEK MATH (Monday -> Monday, cutoff end of Monday) ------------
-// Returns the {start, end, payDate, label} for the settlement week that the
-// given offset points to. offset 0 = the current week (the one whose closing
-// Monday is the next Monday at/after today). Negative = prior weeks.
-//
-// A settlement week is paid on its CLOSING MONDAY and contains everything from
-// the day after the PREVIOUS Monday through that closing Monday end-of-day:
-//   start = (closing Monday - 6 days) 00:00:00   (the Tuesday)
-//   end   = closing Monday 23:59:59
 function settlementWeek(offset) {
   const now = new Date()
   const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0)
-  // JS: 0=Sun,1=Mon,...; find the closing Monday at/after today.
   const dow = d.getDay()
-  const daysUntilMon = (1 - dow + 7) % 7   // 0 if today is Monday
+  const daysUntilMon = (1 - dow + 7) % 7
   const closingMon = new Date(d)
   closingMon.setDate(d.getDate() + daysUntilMon)
-  // apply week offset
   closingMon.setDate(closingMon.getDate() + offset * 7)
   const end = new Date(closingMon.getFullYear(), closingMon.getMonth(), closingMon.getDate(), 23, 59, 59, 999)
   const start = new Date(end)
@@ -87,8 +61,6 @@ function settlementWeek(offset) {
   return { start, end, payDate: end, label }
 }
 
-// A load's anchor date for week bucketing. Today = billed/delivery date.
-// Swap this one line to a dedicated bill_date when the schema has one.
 function weekAnchorDate(load) {
   return parseAppDate(loadDate(load))
 }
@@ -123,6 +95,14 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
     return () => { cancelled = true }
   }, [driverName])
 
+  // Lock the page body scroll while the overlay is open, and restore on close.
+  // Belt-and-suspenders with the portal: the overlay owns the screen.
+  useEffect(() => {
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [])
+
   const week = useMemo(() => settlementWeek(weekOffset), [weekOffset])
   const cut = normalizeOwnerCut(ownerCutPct)
 
@@ -132,7 +112,7 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
     const weekLoads = dLoads.filter(l => inWeek(weekAnchorDate(l), week))
 
     const payRows = weekLoads.map(l => {
-      const loadTotal = parseFloat(l.net_pay) || parseFloat(l.base_pay) || 0 // billed total
+      const loadTotal = parseFloat(l.net_pay) || parseFloat(l.base_pay) || 0
       const base      = parseFloat(l.base_pay) || 0
       const driverBase = l.is_owner_operator ? base : base * (1 - cut)
       const fuelSur   = parseFloat(l.fuel) || 0
@@ -144,7 +124,6 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
         driverBase,
         fuelSur,
         detention,
-        // line subtotal = driver's split + fuel surcharge + detention/extra
         lineTotal: driverBase + fuelSur + detention,
         isAch: !!l.ach_payment,
       }
@@ -152,8 +131,6 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
 
     const driverGross = payRows.reduce((s, r) => s + r.lineTotal, 0)
 
-    // -- CARRIER DEDUCTIONS --------------------------------------------------
-    // Fleet fuel card charged in this week.
     const fleetFuelRows = fuelEntries
       .filter(f => (f.driver || '').toUpperCase() === driverName.toUpperCase()
         && f.fuel_type === 'fleet'
@@ -161,9 +138,6 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
       .map(f => ({ label: 'Fleet Fuel Card', date: f.entry_date, note: f.notes || '', amount: parseFloat(f.amount) || 0 }))
     const fleetFuelTotal = fleetFuelRows.reduce((s, r) => s + r.amount, 0)
 
-    // Carrier advances: unrepaid ones reduce pay. Show each with its reference
-    // (reason + note) and the amount. (FIFO per-advance recovery + payment
-    // arrangements come in the next step once we store a recovery schedule.)
     const advanceRows = carrierAdvances
       .filter(a => (a.driver || '').toUpperCase() === driverName.toUpperCase() && !a.repaid)
       .map(a => ({
@@ -180,15 +154,13 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
   }, [loads, driverName, week, cut, fuelEntries, carrierAdvances])
 
   // -- STYLES (paystub look: white sheet, plain BLACK text throughout) -------
-  const INK = '#111'            // one ink color for the whole document
-  const MUTE = '#555'           // muted black for secondary lines (dates/refs)
-  // Outer shell: fixed, full-screen, NON-scrolling flex column. The header bar
-  // is a fixed row at the top (always visible); a single inner area scrolls
-  // beneath it. No forced scroll position — native scrolling, nothing fights
-  // the user's finger.
-  const sheet = { position:'fixed', inset:0, background:'#fff', zIndex:9999, display:'flex', flexDirection:'column' }
+  const INK = '#111'
+  const MUTE = '#555'
+  // Fixed, full-viewport, NON-scrolling flex column. Rendered via portal into
+  // document.body (see return) so it escapes the app's scroll container.
+  const sheet = { position:'fixed', top:0, left:0, right:0, bottom:0, background:'#fff', zIndex:100000, display:'flex', flexDirection:'column' }
   const bar   = { flex:'0 0 auto', background:'#fff', borderBottom:'2px solid #111', padding:'calc(env(safe-area-inset-top, 0px) + 12px) 16px 12px', display:'flex', alignItems:'center', justifyContent:'space-between' }
-  const scroller = { flex:'1 1 auto', overflowY:'auto', WebkitOverflowScrolling:'touch', overscrollBehavior:'contain' }
+  const scroller = { flex:'1 1 auto', overflowY:'auto', WebkitOverflowScrolling:'touch', overscrollBehavior:'contain', paddingBottom:'env(safe-area-inset-bottom, 0px)' }
   const wrap  = { padding:16, maxWidth:620, margin:'0 auto', color:INK }
   const sect  = { fontSize:12, fontWeight:900, color:INK, fontFamily:'var(--font-head)', letterSpacing:'0.08em', margin:'18px 0 6px', paddingLeft:2 }
   const card  = { borderRadius:6, border:'1px solid #bbb', overflow:'hidden' }
@@ -197,7 +169,7 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
   const rightAmt = { fontFamily:'var(--font-head)', fontWeight:700, color:INK }
   const totalRow = { display:'flex', justifyContent:'space-between', alignItems:'baseline', padding:'12px', background:'#f2f2f2', fontWeight:800, fontSize:14, color:INK, fontFamily:'var(--font-head)' }
 
-  return (
+  const overlay = (
     <div style={sheet}>
       <div style={bar}>
         <div>
@@ -273,8 +245,6 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
                 </div>
               ))}
 
-              {/* Recurring carrier charges — not yet stored; placeholder section
-                  so the stub is structurally complete. Real lines wire in next. */}
               <div style={{ ...row, color:MUTE, fontStyle:'italic', fontSize:12 }}>
                 <span>Recurring charges (insurance, plates, payment plans) — coming next</span>
                 <span style={{ ...rightAmt, color:MUTE }}>—</span>
@@ -286,7 +256,7 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
               <div style={totalRow}><span>TOTAL DEDUCTIONS</span><span>-{fmt(stub.totalDeductions)}</span></div>
             </div>
 
-            {/* NET PAY — plain black, bordered, document style */}
+            {/* NET PAY */}
             <div style={{ marginTop:18, borderRadius:6, overflow:'hidden', border:'2px solid #111' }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'16px 14px', background:'#fff' }}>
                 <div>
@@ -307,4 +277,8 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
       </div>
     </div>
   )
+
+  // Portal to document.body so the fixed overlay escapes App's `.tab-content`
+  // scroll container and covers the true viewport (the iOS clipping fix).
+  return createPortal(overlay, document.body)
 }
