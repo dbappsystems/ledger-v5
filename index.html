@@ -15,13 +15,29 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <!-- PDF.js — only needed when scanning a PDF rate con/receipt. Loaded
+         defensively: if the CDN is slow or blocked on cellular, image scans
+         must still work (they never touch PDF.js). The worker config is set
+         once the library is ready, and a load failure is logged, not fatal. -->
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin />
     <script>
-      if (window.pdfjsLib) {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
-      }
+      // Configure the PDF.js worker as soon as the library is present. This runs
+      // both on immediate availability and after the async script finishes.
+      window.__configurePdfJs = function () {
+        if (window.pdfjsLib && window.pdfjsLib.GlobalWorkerOptions) {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+            'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+          return true;
+        }
+        return false;
+      };
     </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"
+      crossorigin="anonymous"
+      onload="window.__configurePdfJs && window.__configurePdfJs();"
+      onerror="console.error('PDF.js failed to load from CDN — PDF scans unavailable, image scans still work.');"
+    ></script>
   </head>
   <body>
     <div id="root"></div>
