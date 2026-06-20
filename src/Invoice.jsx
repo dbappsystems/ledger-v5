@@ -5,18 +5,19 @@
 // the token api() client. The `api` URL prop is gone.
 //
 // SCAN ROBUSTNESS (2026-06-20):
-//   - isPDF() only routes a file to the PDF.js path when we're CONFIDENT it is a
-//     PDF. iOS can hand images over with an empty file.type; those now default
-//     to the image path, so photo scans never depend on PDF.js loading.
-//   - renderPdfToCanvas() waits briefly for window.pdfjsLib (CDN script can lag
-//     on cellular) before giving up, instead of throwing instantly.
+//   - sniffIsPdf() reads the file's first bytes and only treats it as a PDF when
+//     they are the literal "%PDF-" signature. iOS file types/names are
+//     unreliable; bytes are not. A photo can NEVER be misrouted to PDF.js now.
+//   - PDF.js is only ever touched for true PDFs. Photo receipt scans (the normal
+//     flow) do not depend on the PDF.js CDN at all.
+//   - mediaType sent to the worker is derived the same way, so the OCR call
+//     always declares the correct content type.
 //
 // WHITE-LABEL (done): the generated invoice PDF carrier identity — company name,
 // contact name, address, MC#/DOT#, contact line, signature, and the PDF filename
-// — now comes from the tenant's own settings (display_name, legal_name,
+// — comes from the tenant's own settings (display_name, legal_name,
 // remit_address, mc_number, dot_number, support_email, slug from migration 0002),
-// passed in as the tenantSettings prop and resolved from the session token by the
-// worker. Fallbacks are NEUTRAL/blank — no client's data lives in code.
+// resolved from the session token by the worker. Fallbacks are NEUTRAL/blank.
 
 import { useState, useRef } from 'react'
 import { jsPDF } from 'jspdf'
@@ -74,18 +75,21 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
   function fmt(n) { return '$' + n.toFixed(2) }
   function openScanner(mode) { scanMode.current = mode; fileRef.current.click() }
 
-  // Only treat a file as a PDF when we're CONFIDENT it is one. iOS sometimes
-  // hands images over with an empty file.type; defaulting those to the image
-  // path keeps photo scans off the PDF.js dependency entirely.
-  function isPDF(file) {
-    const type = (file && file.type) ? file.type.toLowerCase() : ''
-    const name = (file && file.name) ? file.name.toLowerCase() : ''
-    if (type) return type === 'application/pdf'  // trust an explicit content type
-    return name.endsWith('.pdf')                 // only fall back to extension
+  // Detect a PDF by its actual bytes, not by the OS-supplied type/name (both
+  // unreliable on iOS). A real PDF begins with the ASCII signature "%PDF-".
+  // Anything else — including every photo — is treated as an image.
+  async function sniffIsPdf(file) {
+    try {
+      const head = await file.slice(0, 5).arrayBuffer()
+      const b = new Uint8Array(head)
+      // 0x25 0x50 0x44 0x46 0x2D === "%PDF-"
+      return b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46 && b[4] === 0x2D
+    } catch {
+      return false  // if we can't read the header, assume image (safer path)
+    }
   }
 
-  // Wait briefly for the PDF.js CDN script (it can lag on cellular) before
-  // giving up, instead of throwing the instant a tap lands before it's ready.
+  // Wait briefly for the PDF.js script before giving up (only used for true PDFs).
   async function waitForPdfJs(maxMs = 4000) {
     if (window.pdfjsLib) return window.pdfjsLib
     const step = 150
@@ -229,10 +233,11 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     return { dataUrl, base64, w, h }
   }
 
-  // ── PROCESS ANY FILE — image OR pdf ──────────────────────
-  async function processFile(file) {
+  // ── PROCESS ANY FILE — image OR pdf (decided by byte signature) ──
+  async function processFile(file, isPdfHint) {
+    const isPdf = (typeof isPdfHint === 'boolean') ? isPdfHint : await sniffIsPdf(file)
     let canvas
-    if (isPDF(file)) {
+    if (isPdf) {
       canvas = await renderPdfToCanvas(file)
     } else {
       canvas = await new Promise((resolve, reject) => {
@@ -296,14 +301,17 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     setScanning(mode)
     showToast('📡 Scanning receipt...')
     try {
-      const scanned   = await processFile(file)
+      // Decide PDF vs image ONCE, by bytes, and reuse for both the local render
+      // and the media type we send to the worker.
+      const isPdf     = await sniffIsPdf(file)
+      const scanned   = await processFile(file, isPdf)
       const base64    = await toBase64(file)
-      const mediaType = isPDF(file) ? 'application/pdf' : (file.type || 'image/jpeg')
+      const mediaType = isPdf ? 'application/pdf' : (file.type || 'image/jpeg')
       const json = await apiClient('/api/ocr', {
         method: 'POST',
         json:   { base64, mediaType, mode },
       })
-      // api() now throws on any non-200 with the real reason preserved in
+      // api() throws on any non-200 with the real reason preserved in
       // err.message / err.detail, so reaching here means HTTP 200. Still guard
       // the body in case the worker returned a 200 with an error field.
       if (json && json.error) throw new Error(json.detail || json.error)
@@ -324,9 +332,6 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
       if (mode === 'express')    setLoad(p => ({ ...p, comdatas:    [...p.comdatas,    item] }))
       showToast('✅ Receipt scanned! $' + amount)
     } catch (err) {
-      // Show the REAL reason. api() surfaces the worker's error label + detail
-      // (auth, credits, model, rate limit, network); local errors (image/pdf
-      // read) surface their own message.
       const reason = (err && (err.detail || err.message))
         ? String(err.detail || err.message).slice(0, 110)
         : 'unknown error'
