@@ -9,52 +9,87 @@ export default function RateCon({ load, setLoad, driver, showToast, onNext }) {
   const [scanned,  setScanned]  = useState(false)
   const fileRef = useRef()
 
-  async function handleFile(e) {
-    const file = e.target.files[0]
-    if (!file) return
-    setScanning(true)
-    showToast('📡 Scanning...')
-    try {
-      const base64    = await toBase64(file)
-      const mediaType = file.type
-      const json      = await apiClient('/api/ocr', {
-        method: 'POST',
-        json:   { base64, mediaType, mode: 'rateconf' },
-      })
+  // Parse one OCR JSON result into a normalized load-fields object.
+  function parseResult(json) {
+    if (json.error) {
+      throw new Error((json.detail || json.error).toString().slice(0, 80))
+    }
+    let raw = json.result || ''
+    raw = raw.replace(/```json/gi, '').replace(/```/gi, '').trim()
+    const start = raw.indexOf('{')
+    const end   = raw.lastIndexOf('}')
+    if (start === -1 || end === -1) {
+      throw new Error('No data found in document')
+    }
+    const data = JSON.parse(raw.substring(start, end + 1))
+    return {
+      broker_name:   data.broker_name        || data.broker   || '',
+      load_number:   data.broker_load_number || data.loadnum  || '',
+      origin:        data.pickup_location    || data.pickup   || '',
+      destination:   data.delivery_location  || data.delivery || '',
+      pickup_date:   data.pickup_date        || '',
+      delivery_date: data.delivery_date      || data.deldate  || '',
+      base_pay:      data.base_pay           || data.rate     || '',
+    }
+  }
 
-      if (json.error) {
-        showToast('❌ ' + (json.detail || json.error).toString().slice(0, 80))
-        return
+  async function handleFile(e) {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    setScanning(true)
+
+    try {
+      // Accumulate fields across all pages. Earlier non-empty values win;
+      // later pages only fill blanks so a clean page never overwrites good data.
+      const merged = {}
+      const fields = [
+        'broker_name', 'load_number', 'origin', 'destination',
+        'pickup_date', 'delivery_date', 'base_pay',
+      ]
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        showToast(files.length > 1
+          ? `📡 Scanning page ${i + 1} of ${files.length}...`
+          : '📡 Scanning...')
+
+        const base64    = await toBase64(file)
+        const mediaType = file.type
+        const json      = await apiClient('/api/ocr', {
+          method: 'POST',
+          json:   { base64, mediaType, mode: 'rateconf' },
+        })
+
+        let parsed
+        try {
+          parsed = parseResult(json)
+        } catch (pageErr) {
+          // Don't kill the whole batch for one bad page.
+          showToast(`⚠️ Page ${i + 1}: ${pageErr.message.slice(0, 60)}`)
+          continue
+        }
+
+        for (const f of fields) {
+          if (!merged[f] && parsed[f]) merged[f] = parsed[f]
+        }
       }
 
-      // Clean the result — strip markdown fences if any
-      let raw = json.result || ''
-      raw = raw.replace(/```json/gi,'').replace(/```/gi,'').trim()
-      const start = raw.indexOf('{')
-      const end   = raw.lastIndexOf('}')
-      if (start === -1 || end === -1) {
+      if (!Object.keys(merged).length) {
         showToast('❌ No data found in document')
         return
       }
 
-      const data = JSON.parse(raw.substring(start, end + 1))
-
-      setLoad(prev => ({
-        ...prev,
-        broker_name:   data.broker_name        || data.broker   || '',
-        load_number:   data.broker_load_number || data.loadnum  || '',
-        origin:        data.pickup_location    || data.pickup   || '',
-        destination:   data.delivery_location  || data.delivery || '',
-        pickup_date:   data.pickup_date        || '',
-        delivery_date: data.delivery_date      || data.deldate  || '',
-        base_pay:      data.base_pay           || data.rate     || '',
-      }))
+      setLoad(prev => ({ ...prev, ...merged }))
       setScanned(true)
-      showToast('✅ Rate con scanned!')
+      showToast(files.length > 1
+        ? `✅ ${files.length} pages scanned & merged!`
+        : '✅ Rate con scanned!')
     } catch (err) {
       showToast('❌ ' + err.message.slice(0, 80))
     } finally {
       setScanning(false)
+      // Reset so re-selecting the same files fires onChange again.
+      if (fileRef.current) fileRef.current.value = ''
     }
   }
 
@@ -86,6 +121,7 @@ export default function RateCon({ load, setLoad, driver, showToast, onNext }) {
           ref={fileRef}
           type="file"
           accept="application/pdf,image/*"
+          multiple
           style={{ display:'none' }}
           onChange={handleFile}
         />
@@ -113,6 +149,9 @@ export default function RateCon({ load, setLoad, driver, showToast, onNext }) {
             </>
           )}
         </button>
+        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--grey)' }}>
+          Multi-page rate con? Select all photos at once — pages merge into one load.
+        </div>
       </div>
 
       <div className="card">
