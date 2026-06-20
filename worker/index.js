@@ -96,6 +96,20 @@ async function getV4Receipt(kind, id) {
   }
 }
 
+// DIAGNOSTIC (temporary): returns the raw outcome of the V4 fetch so we can see
+// at runtime exactly why getV4Receipt yields null. Remove after diagnosis.
+async function diagV4Receipt(kind, id) {
+  try {
+    const res = await fetch(V4_BASE + '/api/' + kind + '/' + id);
+    const ct = res.headers.get('content-type') || '';
+    let len = -1;
+    try { const buf = await res.arrayBuffer(); len = buf.byteLength; } catch (e2) { len = 'arrayBuffer-threw:' + e2.message; }
+    return { stage: 'fetched', status: res.status, ok: res.ok, contentType: ct, byteLength: len };
+  } catch (e) {
+    return { stage: 'fetch-threw', error: e.message };
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url  = new URL(request.url);
@@ -587,6 +601,12 @@ export default {
           return new Response(object.body, {
             headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
           });
+        }
+        // DIAGNOSTIC: if ?diag=1, return the raw V4 fetch outcome as JSON instead
+        // of serving the image, so we can see exactly why the fallback yields null.
+        if (url.searchParams.get('diag') === '1') {
+          const d = await diagV4Receipt('maintenance-receipt', entryId);
+          return json({ diag: true, entryId, v4base: V4_BASE, result: d });
         }
         // V5 bucket has nothing yet — fall back to the legacy V4 receipt URL.
         const v4 = await getV4Receipt('maintenance-receipt', entryId);
