@@ -130,6 +130,71 @@ export function carrierAdvanceOwed(carrierAdvances) {
     .reduce((s,a) => s + (parseFloat(a.amount) || 0), 0)
 }
 
+// RECURRING CHARGES — standing weekly carrier deductions: insurance, plate (IRP)
+// installments, payment plans. Each row from /api/recurring-charges stores its
+// NATURAL amount + cadence; this turns one row into the dollar figure that hits
+// ONE settlement week. The result is what the paystub shows on its own line and
+// what feeds TOTAL DEDUCTIONS for that week.
+//
+//   cadence 'weekly'  -> amount is already the per-week figure.
+//   cadence 'monthly' -> amount is per-month; sliced to the week as amount*12/52
+//                        so a $1,200/mo insurance line shows ~$276.92/week, never
+//                        the whole month dumped into a single week (Non-Exploitation).
+//
+// A charge applies to a week only if it is active AND the week's pay date falls
+// on/after start_date and on/before end_date (blank dates = open-ended). Pass the
+// week's payDate (a Date) so the date window is judged on the day the driver is
+// actually paid.
+export function recurringChargeWeeklyAmount(charge) {
+  const amt = parseFloat(charge.amount) || 0
+  if (amt <= 0) return 0
+  const cadence = (charge.cadence || 'weekly').toLowerCase()
+  if (cadence === 'monthly') return amt * 12 / 52   // monthly -> weekly slice
+  return amt                                          // weekly (default)
+}
+
+export function recurringChargeAppliesToWeek(charge, weekPayDate) {
+  if (!charge || charge.active === 0 || charge.active === '0' || charge.active === false) return false
+  const pay = weekPayDate instanceof Date ? weekPayDate : parseAppDate(weekPayDate)
+  if (!pay) return true // no week date to judge against -> don't hide the charge
+  const start = parseAppDate(charge.start_date)
+  const end   = parseAppDate(charge.end_date)
+  if (start && pay < start) return false
+  if (end) {
+    // inclusive of the end day
+    const endEod = new Date(end.getFullYear(), end.getMonth(), end.getDate(), 23, 59, 59, 999)
+    if (pay > endEod) return false
+  }
+  return true
+}
+
+// Build the per-week recurring-charge lines for a driver: one entry per active,
+// in-window charge with its sliced weekly dollar amount. Returns { rows, total }.
+// `rows` are display-ready: { label, charge_type, amount }.
+export function recurringChargesForWeek(recurringCharges, driverName, weekPayDate) {
+  const list = Array.isArray(recurringCharges) ? recurringCharges : []
+  const dn = (driverName || '').toUpperCase()
+  const rows = list
+    .filter(c => (c.driver || '').toUpperCase() === dn)
+    .filter(c => recurringChargeAppliesToWeek(c, weekPayDate))
+    .map(c => {
+      const amount = recurringChargeWeeklyAmount(c)
+      const typeLabel = ({
+        insurance: 'Insurance', plates: 'Plates / IRP',
+        payment_plan: 'Payment Plan', other: 'Recurring Charge',
+      })[(c.charge_type || 'other')] || 'Recurring Charge'
+      return {
+        label: (c.label && c.label.trim()) ? c.label.trim() : typeLabel,
+        charge_type: c.charge_type || 'other',
+        cadence: (c.cadence || 'weekly').toLowerCase(),
+        amount,
+      }
+    })
+    .filter(r => r.amount > 0)
+  const total = rows.reduce((s, r) => s + r.amount, 0)
+  return { rows, total }
+}
+
 // -- RUNNING BALANCE — all-time, the ONE formula -----------------------------
 // Now takes ownerCutPct from the tenant. Behavior identical to v4 when
 // ownerCutPct = 0.10 and no loads are flagged owner-operator.
@@ -138,6 +203,13 @@ export function carrierAdvanceOwed(carrierAdvances) {
 //   Omit it (or pass []) and the result is byte-identical to before — this is
 //   what keeps existing settlements unchanged until the UI begins supplying
 //   advances. Unrepaid advances subtract from stillOwed, like fuel/escrow.
+//
+// NOTE on recurring charges: the all-time running balance intentionally does NOT
+// fold in recurring_charges. Insurance/plates/payment-plans are PER-WEEK
+// settlement deductions shown on the weekly paystub (see recurringChargesForWeek),
+// not part of the all-time "still owed to the company" load/fuel/advance balance.
+// Keeping them out of computeRunningBalance keeps that number byte-identical to
+// v4 and avoids double-counting a weekly deduction against the lifetime balance.
 export function computeRunningBalance({ loads, fuelEntries, escrowTotal, driver, ownerCutPct = DEFAULT_OWNER_CUT, carrierAdvances = [] }) {
   const cut    = normalizeOwnerCut(ownerCutPct)
   const dn     = driver
