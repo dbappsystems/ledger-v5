@@ -40,8 +40,15 @@
 //   is the load's billed/delivery date (loadDate from settlementMath) because
 //   that is the only billing-completion date the schema currently has; when a
 //   dedicated bill date is added, swap weekAnchorDate() to use it — one line.
+//
+// SCROLL (2026-06-20): this is a fixed full-screen overlay with its own scroll.
+//   On iOS a fixed overlay can retain a stale scroll position and feel stuck
+//   below the header. sheetRef + scrollTop=0 on open/week-change guarantees the
+//   top (settlement header + week navigator) is always reachable, the sticky
+//   bar carries safe-area-inset-top padding so it clears the notch/URL bar, and
+//   overscrollBehavior:contain stops the page behind from stealing the scroll.
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { api as apiClient } from './api.js'
 import {
   normalizeOwnerCut, parseAppDate, loadDate, calcPay,
@@ -92,6 +99,7 @@ function inWeek(dateObj, week) {
 
 export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, color = '#1e88e5', onClose }) {
   const [weekOffset, setWeekOffset] = useState(0)
+  const sheetRef = useRef(null)
   const [fuelEntries, setFuelEntries] = useState([])
   const [carrierAdvances, setCarrierAdvances] = useState([])
   const [loading, setLoading] = useState(true)
@@ -117,6 +125,13 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
 
   const week = useMemo(() => settlementWeek(weekOffset), [weekOffset])
   const cut = normalizeOwnerCut(ownerCutPct)
+
+  // Always open (and re-open on week change) scrolled to the very top. On iOS a
+  // fixed full-screen overlay can otherwise retain a stale scroll position and
+  // feel "stuck" below the header — this guarantees the top is reachable.
+  useEffect(() => {
+    if (sheetRef.current) sheetRef.current.scrollTop = 0
+  }, [weekOffset, loading])
 
   // -- DRIVER PAY: loads that fall in this settlement week --------------------
   const stub = useMemo(() => {
@@ -174,8 +189,8 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
   // -- STYLES (paystub look: white sheet, plain BLACK text throughout) -------
   const INK = '#111'            // one ink color for the whole document
   const MUTE = '#555'           // muted black for secondary lines (dates/refs)
-  const sheet = { position:'fixed', inset:0, background:'#fff', zIndex:9999, overflowY:'auto', WebkitOverflowScrolling:'touch' }
-  const bar   = { position:'sticky', top:0, background:'#fff', borderBottom:'2px solid #111', padding:'12px 16px', display:'flex', alignItems:'center', justifyContent:'space-between', zIndex:10 }
+  const sheet = { position:'fixed', inset:0, background:'#fff', zIndex:9999, overflowY:'auto', WebkitOverflowScrolling:'touch', overscrollBehavior:'contain' }
+  const bar   = { position:'sticky', top:0, background:'#fff', borderBottom:'2px solid #111', padding:'calc(env(safe-area-inset-top, 0px) + 12px) 16px 12px', display:'flex', alignItems:'center', justifyContent:'space-between', zIndex:10 }
   const wrap  = { padding:16, maxWidth:620, margin:'0 auto', color:INK }
   const sect  = { fontSize:12, fontWeight:900, color:INK, fontFamily:'var(--font-head)', letterSpacing:'0.08em', margin:'18px 0 6px', paddingLeft:2 }
   const card  = { borderRadius:6, border:'1px solid #bbb', overflow:'hidden' }
@@ -185,7 +200,7 @@ export default function DriverPaystub({ driverName, loads, ownerCutPct = 10, col
   const totalRow = { display:'flex', justifyContent:'space-between', alignItems:'baseline', padding:'12px', background:'#f2f2f2', fontWeight:800, fontSize:14, color:INK, fontFamily:'var(--font-head)' }
 
   return (
-    <div style={sheet}>
+    <div style={sheet} ref={sheetRef}>
       <div style={bar}>
         <div>
           <div style={{ fontSize:11, color:MUTE, fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>DRIVER SETTLEMENT</div>
