@@ -7,7 +7,10 @@
 //   prop is gone; the invoice link uses apiUrl() + a ?t=<token> query.
 //
 // INVOICE PDFs:
-//   VIEW INVOICE PDF regenerates from load data (generateInvoicePDF).
+//   VIEW INVOICE PDF opens the STORED R2 PDF (the exact file that was saved at
+//   invoice time, with BOLs + receipts attached). For an unsaved local load
+//   (no load.id) it falls back to regenerating from load data.
+//   OPEN STORED PDF also opens the stored R2 PDF (V5, with V4 fallback).
 //   SAVE TO V5 copies a load's legacy V4 stored PDF into the V5 bucket via
 //   POST /api/invoice/:id/save (worker reads R2_V4, writes R2). Uses the
 //   logged-in session token, so the owner taps it right in the app — no file
@@ -660,9 +663,9 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
                   <span style={{ fontSize:20, fontFamily:'var(--font-head)', fontWeight:900, color:'var(--navy)' }}>{fmt(netPay)}</span>
                 </div>
               </div>
-              {/* PDF actions: regenerate, view stored (V5/V4), save V4→V5 */}
+              {/* PDF actions: VIEW = stored R2 PDF (regenerate fallback for unsaved), save V4→V5 */}
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10 }}>
-                <button onClick={() => generateInvoicePDF(load)} style={{ padding:'8px 0', borderRadius:8, background:'transparent', border:'1px solid var(--amber)', color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, textAlign:'center', cursor:'pointer', letterSpacing:'0.04em' }}>VIEW INVOICE PDF</button>
+                <button onClick={() => load.id ? viewStoredInvoice(load) : generateInvoicePDF(load)} style={{ padding:'8px 0', borderRadius:8, background:'transparent', border:'1px solid var(--amber)', color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, textAlign:'center', cursor:'pointer', letterSpacing:'0.04em' }}>VIEW INVOICE PDF</button>
                 {load.id && (
                   <button onClick={() => saveToV5(load)} disabled={isSavingV5} style={{ padding:'8px 0', borderRadius:8, background: isSavedV5 ? '#e8f5e9' : 'transparent', border: isSavedV5 ? '1px solid #2e7d32' : '1px solid var(--navy)', color: isSavedV5 ? '#2e7d32' : 'var(--navy)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, textAlign:'center', cursor: isSavingV5 ? 'default' : 'pointer', letterSpacing:'0.04em' }}>
                     {isSavingV5 ? 'SAVING…' : (isSavedV5 ? '✓ IN V5' : 'SAVE TO V5')}
