@@ -340,19 +340,35 @@ export default {
           }
         }
 
+        // Persist the full line-item arrays (lumpers/incidentals/comdatas) on the
+        // initial save — not just the totals. Without these, a reloaded load card
+        // cannot render the Lumper/Comdata lines and only shows base pay + totals.
+        // Accepts either a JSON string or an array from the client.
+        const asJson = (v) => {
+          if (v == null) return '[]';
+          if (typeof v === 'string') { const s = v.trim(); return s ? s : '[]'; }
+          try { return JSON.stringify(v); } catch { return '[]'; }
+        };
+        const lumpersJson     = asJson(b.lumpers);
+        const incidentalsJson = asJson(b.incidentals);
+        const comdatasJson    = asJson(b.comdatas);
+
         await env.DB.prepare(`
           INSERT INTO loads
             (id, tenant_id, driver_id, driver, broker_id, broker_name, broker_email, load_number,
              origin, destination, pickup_date, delivery_date,
              base_pay, lumper_total, incidental_total, comdata_total,
+             lumpers, incidentals, comdatas,
              detention, pallets, net_pay, notes, bol_count, fuel, status, created_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
         `).bind(
           id, T, driverVal, driverVal, brokerId,
           b.broker_name||'', b.broker_email||'', b.load_number||'',
           b.origin||'', b.destination||'', b.pickup_date||'', b.delivery_date||'',
           b.base_pay||0, b.lumper_total||0, b.incidental_total||0,
-          b.comdata_total||0, b.detention||0, b.pallets||0,
+          b.comdata_total||0,
+          lumpersJson, incidentalsJson, comdatasJson,
+          b.detention||0, b.pallets||0,
           b.net_pay||0, b.notes||'', b.bol_count||0, b.fuel||0,
           b.status||'invoiced',
         ).run();
