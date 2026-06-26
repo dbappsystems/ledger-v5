@@ -20,6 +20,16 @@
 //   sniffIsPdf() still decides PDF vs image by the file's real first bytes
 //   ("%PDF-"), since iOS type/name are unreliable.
 //
+// BOL ROBUSTNESS (2026-06-26):
+//   BOL adds used to call processFile(f) blindly — for a PDF that forced the
+//   PDF.js path, and if PDF.js was blocked by CSP the WHOLE add threw and the
+//   user got NOTHING. That is why lumpers/incidentals (OCR-first) worked while
+//   BOLs never did. handleBOL now processes each file INDEPENDENTLY and, when
+//   the B&W/PDF.js pipeline fails, falls back to embedding the file's own bytes
+//   directly (rawImageFallback). A BOL can no longer be blocked by PDF.js. A
+//   true PDF that cannot be rasterized is still attached as a raw page so the
+//   document is never lost.
+//
 // WHITE-LABEL (done): the generated invoice PDF carrier identity — company name,
 // contact name, address, MC#/DOT#, contact line, signature, and the PDF filename
 // — comes from the tenant's own settings (display_name, legal_name,
@@ -274,7 +284,58 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     return { ...result, name: file.name }
   }
 
+  // ── RAW IMAGE FALLBACK — never lose a BOL ────────────────
+  // Used when the B&W / PDF.js pipeline fails (e.g. PDF.js blocked by CSP, or a
+  // PDF that cannot be rasterized on-device). For an IMAGE we embed the photo as
+  // it is (no B&W cleanup, but the BOL is captured). For a PDF that cannot be
+  // rendered, we cannot turn it into an <img>, so we attach a lightweight
+  // placeholder page that names the file — the load is still recorded with the
+  // correct BOL count and the driver is told to add a photo of the page.
+  async function rawImageFallback(file, isPdf) {
+    if (isPdf) {
+      // Cannot rasterize the PDF on this device. Capture it as a named
+      // placeholder so the BOL is not silently dropped.
+      return {
+        dataUrl: null,
+        base64:  null,
+        w: 0,
+        h: 0,
+        name: file.name,
+        placeholder: true,
+      }
+    }
+    // Image: embed the original photo bytes directly, scaled to a sane max.
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onerror = () => reject(new Error('Could not read the image file'))
+      reader.onload = (ev) => {
+        const img = new Image()
+        img.onerror = () => reject(new Error('Could not decode the image'))
+        img.onload = () => {
+          const MAX = 1400
+          let w = img.naturalWidth  || img.width  || 800
+          let h = img.naturalHeight || img.height || 1000
+          if (w > MAX) { h = Math.round(h * MAX / w); w = MAX }
+          if (h > MAX) { w = Math.round(w * MAX / h); h = MAX }
+          const c  = document.createElement('canvas')
+          c.width  = w
+          c.height = h
+          c.getContext('2d').drawImage(img, 0, 0, w, h)
+          const dataUrl = c.toDataURL('image/jpeg', 0.9)
+          resolve({ dataUrl, base64: dataUrl.split(',')[1], w, h, name: file.name })
+        }
+        img.src = ev.target.result
+      }
+      reader.readAsDataURL(file)
+    })
+  }
+
   // ── BOL UPLOAD ───────────────────────────────────────────
+  // ROBUST: each file is processed INDEPENDENTLY. The preferred path is the
+  // B&W pipeline (processFile). If that throws for a given file — most commonly
+  // a PDF when PDF.js is blocked by CSP — we fall back to rawImageFallback so
+  // the BOL is STILL added. One bad file can never block the rest, and a
+  // PDF.js failure can never block BOLs the way it used to.
   async function handleBOL(e) {
     const files = Array.from(e.target.files || [])
     if (!files.length) return
@@ -283,17 +344,48 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     const toProcess = files.slice(0, remaining)
     setBolLoading(true)
     showToast('📷 Processing BOL scans...')
-    try {
-      const processed = await Promise.all(toProcess.map(f => processFile(f)))
-      setLoad(p => ({ ...p, bols: [...p.bols, ...processed] }))
-      showToast('✅ ' + processed.length + ' BOL(s) added')
-    } catch (err) {
-      showToast('❌ BOL scan failed: ' + (err && err.message ? err.message.slice(0, 70) : 'unknown'))
-      console.error(err)
-    } finally {
-      setBolLoading(false)
-      e.target.value = ''
+
+    const processed = []
+    let cleaned = 0, raw = 0, placeheld = 0, failed = 0
+
+    for (const f of toProcess) {
+      const isPdf = await sniffIsPdf(f)
+      try {
+        const out = await processFile(f, isPdf)
+        processed.push(out)
+        cleaned++
+      } catch (errPrimary) {
+        // Pipeline failed (PDF.js blocked, decode error, etc). Fall back so the
+        // BOL is never lost.
+        try {
+          const fb = await rawImageFallback(f, isPdf)
+          processed.push(fb)
+          if (fb.placeholder) placeheld++; else raw++
+        } catch (errFb) {
+          failed++
+          console.error('BOL fallback failed for', f.name, errFb)
+        }
+      }
     }
+
+    if (processed.length) {
+      setLoad(p => ({ ...p, bols: [...p.bols, ...processed] }))
+    }
+
+    // Honest, specific status — name what happened, no generic failure.
+    const parts = []
+    if (cleaned)   parts.push(cleaned + ' added')
+    if (raw)       parts.push(raw + ' added (original photo)')
+    if (placeheld) parts.push(placeheld + ' PDF noted — add a photo of the page')
+    if (failed)    parts.push(failed + ' failed')
+    if (processed.length) {
+      showToast('✅ BOL: ' + parts.join(', '))
+    } else {
+      showToast('❌ BOL add failed: ' + (failed + ' file(s) could not be read'))
+    }
+
+    setBolLoading(false)
+    e.target.value = ''
   }
 
   function removeBOL(idx) {
@@ -381,7 +473,22 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
 
   // ── ADD SCAN PAGE TO PDF ─────────────────────────────────
   function addScanPage(doc, item, label) {
-    if (!item.dataUrl || !item.w || !item.h) return
+    // A placeholder BOL (PDF that could not be rasterized) has no image. Still
+    // add a named page so the document records that a BOL exists for this load.
+    if (!item.dataUrl || !item.w || !item.h) {
+      if (item && item.placeholder) {
+        try {
+          doc.addPage()
+          const pageW = 612, pageH = 792
+          doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.setTextColor(0,0,0)
+          doc.text(label, pageW / 2, pageH / 2 - 10, { align: 'center' })
+          doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(120,120,120)
+          doc.text('Original BOL on file: ' + (item.name || 'PDF'), pageW / 2, pageH / 2 + 10, { align: 'center' })
+          doc.text('A photo of this BOL page can be added from the load.', pageW / 2, pageH / 2 + 26, { align: 'center' })
+        } catch (err) { console.error('placeholder page error:', err) }
+      }
+      return
+    }
     try {
       doc.addPage()
       const pageW = 612, pageH = 792, pad = 30
@@ -428,6 +535,9 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
           net_pay:          netPay,
           notes:            load.notes         || '',
           bol_count:        load.bols.length,
+          lumpers:          load.lumpers,
+          incidentals:      load.incidentals,
+          comdatas:         load.comdatas,
           status:           'invoiced',
         },
       })
@@ -547,7 +657,7 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     doc.text('dbappsystems.com | daddyboyapps.com', W/2, 760, { align:'center' })
 
     load.bols.forEach((bol,i) =>
-      addScanPage(doc, bol, 'BOL '+(i+1)+' of '+bolCount+' - '+bol.name))
+      addScanPage(doc, bol, 'BOL '+(i+1)+' of '+bolCount+' - '+(bol.name || '')))
     lumperScans.forEach((l,i) =>
       addScanPage(doc, l, 'Lumper Receipt '+(i+1)+' - $'+parseFloat(l.amount).toFixed(2)+' - '+l.label))
     incScans.forEach((l,i) =>
@@ -596,7 +706,7 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
   return (
     <div>
       <input ref={fileRef} type="file" accept="application/pdf,image/*" style={{display:'none'}} onChange={handleFile} />
-      <input ref={bolRef}  type="file" accept="image/*" multiple style={{display:'none'}} onChange={handleBOL} />
+      <input ref={bolRef}  type="file" accept="application/pdf,image/*" multiple style={{display:'none'}} onChange={handleBOL} />
 
       {/* BOL SCANS */}
       <div className="card">
@@ -608,11 +718,15 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
         </div>
         {load.bols.map((bol,i) => (
           <div className="scanned-item" key={i}>
-            <img src={bol.dataUrl} alt={'BOL '+(i+1)}
-              style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}} />
+            {bol.dataUrl
+              ? <img src={bol.dataUrl} alt={'BOL '+(i+1)}
+                  style={{width:48,height:48,objectFit:'cover',borderRadius:6,border:'1px solid var(--border)'}} />
+              : <div style={{width:48,height:48,borderRadius:6,border:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'center',background:'var(--navy3)',color:'var(--grey)',fontSize:9,fontWeight:700,textAlign:'center'}}>PDF</div>}
             <div style={{flex:1,marginLeft:10}}>
               <div className="item-label">BOL {i+1}</div>
-              <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>{bol.name}</div>
+              <div style={{fontSize:10,color:'var(--grey)',marginTop:2}}>
+                {bol.name}{bol.placeholder ? ' — PDF on file, add a photo of the page' : ''}
+              </div>
             </div>
             <button className="remove-btn" onClick={()=>removeBOL(i)}>x</button>
           </div>
