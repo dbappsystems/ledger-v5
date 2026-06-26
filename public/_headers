@@ -15,15 +15,19 @@
 #   Permissions-Policy        : disables APIs the app never uses (camera mic etc).
 #
 # CSP NOTE: the allow-list below is built for what loadledgers ACTUALLY uses —
-# its own origin, Google Fonts, and the ledger-v5 Worker API. If a future
-# feature loads from a new origin, that origin must be added here or it will be
-# blocked. 'unsafe-inline' is included for style/script because the app and the
-# static pages use inline styles and small inline scripts; removing it later
-# (via hashes/nonces) would raise the grade further but is not required for A.
+# its own origin, Google Fonts, the ledger-v5 Worker API, and the PDF.js library
+# served from cdnjs.cloudflare.com. PDF.js is required to render PDF BOLs and PDF
+# receipts to canvas before scanning; without cdnjs in script-src AND worker-src
+# (PDF.js spawns its own web worker, pdf.worker.min.js) the browser blocks the
+# library and every PDF upload silently fails. If a future feature loads from a
+# new origin, that origin must be added here or it will be blocked. 'unsafe-inline'
+# is included for style/script because the app and the static pages use inline
+# styles and small inline scripts; removing it later (via hashes/nonces) would
+# raise the grade further but is not required for A.
 
 /*
   Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://ledger-v5.d49rwgmpj9.workers.dev; connect-src 'self' https://ledger-v5.d49rwgmpj9.workers.dev; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; worker-src 'self' blob: https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https://ledger-v5.d49rwgmpj9.workers.dev; connect-src 'self' https://cdnjs.cloudflare.com https://ledger-v5.d49rwgmpj9.workers.dev; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
