@@ -30,20 +30,18 @@
 //   true PDF that cannot be rasterized is still attached as a raw page so the
 //   document is never lost.
 //
-// SCAN CLARITY (2026-06-30):
-//   Bruce reported invoice digits and heavy black ink merging into solid blobs.
-//   applyBWPipeline was rebuilt. The old order ran a Gaussian blur BEFORE the
-//   adaptive threshold and fed that blur into the threshold, so adjacent dark
-//   strokes pulled each other below the local mean and the white gaps between
-//   digits filled in solid. The old "sharpen" stage also subtracted a grayscale
-//   blur from an already-binary image, producing edge garbage rather than
-//   sharpening. New order: grayscale -> contrast stretch -> unsharp-mask the
-//   GRAYSCALE (deepens the valleys between touching strokes) -> adaptive
-//   threshold on the SHARPENED gray with a WIDER window (max/8) and lower
-//   T (0.10) so heavy-ink regions keep page-white as the reference instead of
-//   neighboring ink -> write back. Input resolution raised 1200 -> 2000px
-//   (PDF render scale up to 3.0) so small digits are large enough to separate,
-//   and JPEG quality raised to 0.95 so clean edges are not re-blurred on encode.
+// SCAN CLARITY (2026-06-30, v3 — Sauvola + auto fallback):
+//   BOL digits and dense black ink were merging into unreadable blobs. The
+//   prior mean-only adaptive threshold floods the white gaps in dense ink.
+//   Replaced with SAUVOLA binarization (the document-imaging reference method):
+//   the local threshold uses local mean AND local standard deviation, so
+//   uniform ink blocks keep the white gaps between characters. Reference
+//   params: window 51, k=0.20, R=128. On top of that, an automatic QUALITY GATE
+//   mirrors Transflo's documented rule — produce black & white only when it
+//   does not sacrifice quality, otherwise fall back to clean grayscale. If the
+//   B&W result is over-inked (>45% black, a blob) OR under-inked (<0.4% black,
+//   a faint scan Sauvola dropped), the cleaned grayscale is returned instead,
+//   so a BOL is ALWAYS readable. Input stays at 2000px.
 //
 // WHITE-LABEL (done): the generated invoice PDF carrier identity — company name,
 // contact name, address, MC#/DOT#, contact line, signature, and the PDF filename
@@ -181,34 +179,46 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     return canvas
   }
 
-  // ── B&W PIPELINE — REBUILT FOR READABLE DENSE TEXT ───────
-  // Failure being fixed: small invoice digits and heavy black ink were merging
-  // together into solid blobs. Two causes — (1) a Gaussian blur ran BEFORE the
-  // adaptive threshold and fed the threshold itself, so adjacent dark strokes
-  // pulled each other below the local mean and the gaps between digits filled
-  // in solid; (2) the old "sharpen" stage subtracted a grayscale blur from an
-  // already-binary image, producing edge garbage, not sharpening.
+  // ── SCAN PIPELINE — INDUSTRY-STANDARD SAUVOLA + AUTO FALLBACK ───
+  // (2026-06-30, v3) Bruce reported BOL digits and dense black ink merging into
+  // unreadable blobs. The earlier Bradley-Roth threshold used only the local
+  // MEAN, so in a dense block of ink the local mean drops and the white gaps
+  // between digits get flooded solid.
   //
-  // New order: grayscale → contrast stretch → unsharp-mask the GRAYSCALE
-  // (separates touching strokes) → adaptive threshold on the SHARPENED gray
-  // with a WIDER window + lower T (so heavy-ink regions keep page-white as the
-  // reference instead of neighboring ink). No post-threshold blur, no binary
-  // "sharpen". Higher JPEG quality so clean edges are not re-blurred on encode.
-  function applyBWPipeline(canvas) {
-    const w    = canvas.width
-    const h    = canvas.height
-    const ctx  = canvas.getContext('2d')
-    const id   = ctx.getImageData(0, 0, w, h)
-    const data = id.data
+  // Replaced with SAUVOLA — the widely-adopted reference method for document
+  // binarization. Sauvola factors in the local standard deviation as well as
+  // the mean: T(x,y) = mean * (1 + k * (stdDev / R - 1)). In a uniform ink
+  // block the local stdDev is low, which RAISES the local threshold and keeps
+  // the thin white gaps between characters open. Reference parameters are used
+  // verbatim: window 51, k = 0.20, R = 128.
+  //
+  // On top of that, an automatic QUALITY GATE mirrors Transflo's documented
+  // rule ("use black & white only if it does not sacrifice quality, otherwise
+  // fall back to grayscale"). After binarizing we measure the black-pixel
+  // fraction. A clean document page is a small percentage black. If the B&W
+  // result comes out heavily over-inked (a blobbed page), we DISCARD it and
+  // return a cleaned GRAYSCALE image instead — always readable, never a blob.
+  //
+  // helpers used by both paths:
+  //   toGrayContrastSharp(canvas) -> { gray, w, h } cleaned grayscale buffer
+  //   integralImage(buf, w, h)    -> integral + integral-of-squares (for stdDev)
 
-    // 1) Grayscale (luma)
+  // Cleaned grayscale: luma -> contrast stretch -> light unsharp mask.
+  // This is the readable fallback AND the input to Sauvola.
+  function toGrayContrastSharp(canvas) {
+    const w   = canvas.width
+    const h   = canvas.height
+    const ctx = canvas.getContext('2d')
+    const id  = ctx.getImageData(0, 0, w, h)
+    const d   = id.data
+
     const gray = new Uint8ClampedArray(w * h)
     for (let i = 0; i < gray.length; i++) {
       const p = i * 4
-      gray[i] = Math.round(0.299 * data[p] + 0.587 * data[p+1] + 0.114 * data[p+2])
+      gray[i] = Math.round(0.299 * d[p] + 0.587 * d[p+1] + 0.114 * d[p+2])
     }
 
-    // 2) Contrast stretch to full 0–255
+    // contrast stretch
     let mn = 255, mx = 0
     for (let i = 0; i < gray.length; i++) {
       if (gray[i] < mn) mn = gray[i]
@@ -219,10 +229,8 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
       gray[i] = Math.round(((gray[i] - mn) / range) * 255)
     }
 
-    // 3) Build a soft blur of the GRAYSCALE — used only to compute the unsharp
-    //    mask. It never feeds the threshold directly.
-    const kernel  = [1,2,1, 2,4,2, 1,2,1]
-    const kSum    = 16
+    // light unsharp mask (3x3 gaussian) to crisp the strokes
+    const kernel = [1,2,1, 2,4,2, 1,2,1]
     const blurred = new Uint8ClampedArray(w * h)
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
@@ -234,61 +242,115 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
             sum += gray[ny * w + nx] * kernel[ki++]
           }
         }
-        blurred[y * w + x] = Math.round(sum / kSum)
+        blurred[y * w + x] = Math.round(sum / 16)
       }
     }
-
-    // 4) Unsharp mask on the GRAYSCALE: sharp = gray + amount*(gray - blurred).
-    //    This deepens the valleys between adjacent strokes so the threshold can
-    //    keep the white gap between digits that used to merge.
-    const sharpGray = new Uint8ClampedArray(w * h)
-    const amount    = 1.2
-    for (let i = 0; i < sharpGray.length; i++) {
+    const sharp = new Uint8ClampedArray(w * h)
+    const amount = 0.8
+    for (let i = 0; i < sharp.length; i++) {
       const v = Math.round(gray[i] + amount * (gray[i] - blurred[i]))
-      sharpGray[i] = v < 0 ? 0 : (v > 255 ? 255 : v)
+      sharp[i] = v < 0 ? 0 : (v > 255 ? 255 : v)
     }
+    return { gray: sharp, w, h, ctx, id, data: d }
+  }
 
-    // 5) Adaptive (Bradley-Roth) threshold on the SHARPENED grayscale.
-    //    WIDER window (max/8 vs the old max/16) so the local reference is true
-    //    page-white, not a neighboring black character. Lower T (0.10) keeps
-    //    thin strokes without flooding dense areas.
-    const S     = Math.max(8, Math.floor(Math.max(w, h) / 8))
-    const T     = 0.10
-    const integ = new Int32Array(w * h)
+  // Render a grayscale buffer back to the canvas and export JPEG.
+  function exportGray(canvas, gray, w, h, ctx, id, data, quality) {
+    for (let i = 0; i < gray.length; i++) {
+      const p = i * 4
+      data[p] = data[p+1] = data[p+2] = gray[i]
+      data[p+3] = 255
+    }
+    ctx.putImageData(id, 0, 0)
+    const dataUrl = canvas.toDataURL('image/jpeg', quality)
+    return { dataUrl, base64: dataUrl.split(',')[1], w, h }
+  }
+
+  // ── PRIMARY: SAUVOLA BINARIZATION WITH GRAYSCALE FALLBACK ──
+  function applyBWPipeline(canvas) {
+    const { gray, w, h, ctx, id, data } = toGrayContrastSharp(canvas)
+
+    // Sauvola needs local mean and local stdDev over a window. Build the
+    // integral image (sum) and the integral image of squares (sumSq) so each
+    // window is O(1). Use Float64 for sumSq to avoid overflow on 2000px scans.
+    const integ   = new Float64Array(w * h)
+    const integSq = new Float64Array(w * h)
     for (let y = 0; y < h; y++) {
-      let rowSum = 0
+      let rowSum = 0, rowSumSq = 0
       for (let x = 0; x < w; x++) {
-        rowSum += sharpGray[y * w + x]
-        integ[y * w + x] = rowSum + (y > 0 ? integ[(y-1)*w+x] : 0)
+        const v = gray[y * w + x]
+        rowSum   += v
+        rowSumSq += v * v
+        const up   = y > 0 ? integ[(y-1)*w+x]   : 0
+        const upSq = y > 0 ? integSq[(y-1)*w+x] : 0
+        integ[y*w+x]   = rowSum   + up
+        integSq[y*w+x] = rowSumSq + upSq
       }
     }
+
+    // Reference Sauvola parameters (document-imaging standard).
+    const WIN = 51                 // window size
+    const k   = 0.20               // Sauvola k constant
+    const R   = 128                // dynamic range of stdDev
+    const rad = Math.floor(WIN / 2)
+
     const out = new Uint8ClampedArray(w * h)
+    let blackCount = 0
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
-        const x1    = Math.max(x - S, 0)
-        const y1    = Math.max(y - S, 0)
-        const x2    = Math.min(x + S, w - 1)
-        const y2    = Math.min(y + S, h - 1)
-        const count = (x2 - x1) * (y2 - y1) || 1
-        const sum   = integ[y2*w+x2]
-                    - (x1 > 0 ? integ[y2*w+(x1-1)] : 0)
-                    - (y1 > 0 ? integ[(y1-1)*w+x2] : 0)
-                    + (x1 > 0 && y1 > 0 ? integ[(y1-1)*w+(x1-1)] : 0)
-        out[y * w + x] = (sharpGray[y*w+x] * count) < (sum * (1 - T)) ? 0 : 255
+        const x1 = Math.max(x - rad, 0)
+        const y1 = Math.max(y - rad, 0)
+        const x2 = Math.min(x + rad, w - 1)
+        const y2 = Math.min(y + rad, h - 1)
+        const area = (x2 - x1 + 1) * (y2 - y1 + 1)
+
+        const A  = (x1 > 0 && y1 > 0) ? integ[(y1-1)*w+(x1-1)] : 0
+        const B  = (y1 > 0)           ? integ[(y1-1)*w+x2]     : 0
+        const C  = (x1 > 0)           ? integ[y2*w+(x1-1)]     : 0
+        const Dt = integ[y2*w+x2]
+        const sum = Dt - B - C + A
+
+        const Asq  = (x1 > 0 && y1 > 0) ? integSq[(y1-1)*w+(x1-1)] : 0
+        const Bsq  = (y1 > 0)           ? integSq[(y1-1)*w+x2]     : 0
+        const Csq  = (x1 > 0)           ? integSq[y2*w+(x1-1)]     : 0
+        const Dsq  = integSq[y2*w+x2]
+        const sumSq = Dsq - Bsq - Csq + Asq
+
+        const mean = sum / area
+        let variance = (sumSq / area) - (mean * mean)
+        if (variance < 0) variance = 0
+        const stdDev = Math.sqrt(variance)
+
+        // Sauvola threshold
+        const t = mean * (1 + k * (stdDev / R - 1))
+        const px = gray[y * w + x] <= t ? 0 : 255
+        out[y * w + x] = px
+        if (px === 0) blackCount++
       }
     }
 
-    // 6) Write the binary result back to RGBA
+    // ── QUALITY GATE (Transflo rule, both directions) ──
+    // A clean text page is a SMALL but non-zero fraction black. Two B&W failure
+    // modes both fall back to clean grayscale so the document is ALWAYS legible:
+    //   • OVER-inked (>45% black): a blobbed page — the merging Bruce reported.
+    //   • UNDER-inked (<0.4% black): faint/low-contrast scan where Sauvola
+    //     dropped the text. Grayscale keeps the faint text visible.
+    // Normal BOLs land well inside this band and keep the crisp B&W.
+    const blackFrac = blackCount / (w * h)
+    if (blackFrac > 0.45 || blackFrac < 0.004) {
+      // fallback: return the cleaned grayscale instead of a blobbed or blank B&W
+      return exportGray(canvas, gray, w, h, ctx, id, data, 0.92)
+    }
+
+    // good B&W: write binary back and export
     for (let i = 0; i < out.length; i++) {
       const p = i * 4
       data[p] = data[p+1] = data[p+2] = out[i]
       data[p+3] = 255
     }
     ctx.putImageData(id, 0, 0)
-
     const dataUrl = canvas.toDataURL('image/jpeg', 0.95)
-    const base64  = dataUrl.split(',')[1]
-    return { dataUrl, base64, w, h }
+    return { dataUrl, base64: dataUrl.split(',')[1], w, h }
   }
 
   // ── PROCESS ANY FILE — image OR pdf (decided by byte signature) ──
