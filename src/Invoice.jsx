@@ -30,6 +30,14 @@
 //   true PDF that cannot be rasterized is still attached as a raw page so the
 //   document is never lost.
 //
+// MULTI-PAGE BOL PDF (2026-07-01):
+//   Bruce reported a 16-page BOL PDF only capturing a couple of pages. Root
+//   cause: renderPdfToCanvas rendered PAGE 1 ONLY, so a whole multi-page PDF
+//   collapsed to a single BOL entry (or a single raw placeholder on fallback).
+//   handleBOL now EXPANDS a PDF into one BOL per page via renderPdfAllPages,
+//   respecting the 50-BOL cap, so a 16-page PDF becomes 16 BOL pages. The
+//   receipt scanner still uses page 1 only, because a receipt is one page.
+//
 // SCAN CLARITY (2026-06-30, v3 — Sauvola + auto fallback):
 //   BOL digits and dense black ink were merging into unreadable blobs. The
 //   prior mean-only adaptive threshold floods the white gaps in dense ink.
@@ -160,13 +168,9 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     showToast('✅ Comdata added: -$' + val.toFixed(2))
   }
 
-  // ── RENDER PDF PAGE 1 TO CANVAS ──────────────────────────
-  async function renderPdfToCanvas(file) {
-    const pdfjsLib = await waitForPdfJs()
-    if (!pdfjsLib) throw new Error('PDF reader still loading — try again, or use a photo of the page')
-    const arrayBuf = await file.arrayBuffer()
-    const pdf      = await pdfjsLib.getDocument({ data: arrayBuf }).promise
-    const page     = await pdf.getPage(1)
+  // ── RENDER ONE PDF PAGE OBJECT TO CANVAS ─────────────────
+  // Rasterize an already-opened PDF page into a fresh canvas at up to 2000px.
+  async function renderPdfPageToCanvas(page) {
     const MAX      = 2000
     const baseVP   = page.getViewport({ scale: 1 })
     const scale    = Math.min(MAX / baseVP.width, MAX / baseVP.height, 3.0)
@@ -177,6 +181,33 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     const ctx      = canvas.getContext('2d')
     await page.render({ canvasContext: ctx, viewport }).promise
     return canvas
+  }
+
+  // ── RENDER PDF PAGE 1 TO CANVAS ──────────────────────────
+  // Used by the RECEIPT scanner, where a receipt is a single page.
+  async function renderPdfToCanvas(file) {
+    const pdfjsLib = await waitForPdfJs()
+    if (!pdfjsLib) throw new Error('PDF reader still loading — try again, or use a photo of the page')
+    const arrayBuf = await file.arrayBuffer()
+    const pdf      = await pdfjsLib.getDocument({ data: arrayBuf }).promise
+    const page     = await pdf.getPage(1)
+    return await renderPdfPageToCanvas(page)
+  }
+
+  // ── RENDER EVERY PDF PAGE TO ITS OWN CANVAS ──────────────
+  // (2026-07-01) Multi-page BOL PDFs must produce one BOL per page. Opens the
+  // PDF once and rasterizes each page 1..numPages into its own canvas.
+  async function renderPdfAllPages(file) {
+    const pdfjsLib = await waitForPdfJs()
+    if (!pdfjsLib) throw new Error('PDF reader still loading — try again, or use a photo of the page')
+    const arrayBuf = await file.arrayBuffer()
+    const pdf      = await pdfjsLib.getDocument({ data: arrayBuf }).promise
+    const canvases = []
+    for (let n = 1; n <= pdf.numPages; n++) {
+      const page = await pdf.getPage(n)
+      canvases.push(await renderPdfPageToCanvas(page))
+    }
+    return canvases
   }
 
   // ── SCAN PIPELINE — INDUSTRY-STANDARD SAUVOLA + AUTO FALLBACK ───
@@ -353,38 +384,66 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     return { dataUrl, base64: dataUrl.split(',')[1], w, h }
   }
 
+  // ── IMAGE FILE -> CANVAS (shared) ────────────────────────
+  function imageFileToCanvas(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onerror = () => reject(new Error('Could not read the image file'))
+      reader.onload = (ev) => {
+        const img = new Image()
+        img.onerror = () => reject(new Error('Could not decode the image'))
+        img.onload = () => {
+          const MAX = 2000
+          let w = img.naturalWidth  || img.width  || 800
+          let h = img.naturalHeight || img.height || 1000
+          if (w > MAX) { h = Math.round(h * MAX / w); w = MAX }
+          if (h > MAX) { w = Math.round(w * MAX / h); h = MAX }
+          const c  = document.createElement('canvas')
+          c.width  = w
+          c.height = h
+          c.getContext('2d').drawImage(img, 0, 0, w, h)
+          resolve(c)
+        }
+        img.src = ev.target.result
+      }
+      reader.readAsDataURL(file)
+    })
+  }
+
   // ── PROCESS ANY FILE — image OR pdf (decided by byte signature) ──
+  // For a PDF this uses PAGE 1 only (receipt scanner path). BOL multi-page
+  // expansion is handled separately in handleBOL via processFileAllPages.
   async function processFile(file, isPdfHint) {
     const isPdf = (typeof isPdfHint === 'boolean') ? isPdfHint : await sniffIsPdf(file)
     let canvas
     if (isPdf) {
       canvas = await renderPdfToCanvas(file)
     } else {
-      canvas = await new Promise((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onerror = () => reject(new Error('Could not read the image file'))
-        reader.onload = (ev) => {
-          const img = new Image()
-          img.onerror = () => reject(new Error('Could not decode the image'))
-          img.onload = () => {
-            const MAX = 2000
-            let w = img.naturalWidth  || img.width  || 800
-            let h = img.naturalHeight || img.height || 1000
-            if (w > MAX) { h = Math.round(h * MAX / w); w = MAX }
-            if (h > MAX) { w = Math.round(w * MAX / h); h = MAX }
-            const c  = document.createElement('canvas')
-            c.width  = w
-            c.height = h
-            c.getContext('2d').drawImage(img, 0, 0, w, h)
-            resolve(c)
-          }
-          img.src = ev.target.result
-        }
-        reader.readAsDataURL(file)
-      })
+      canvas = await imageFileToCanvas(file)
     }
     const result = applyBWPipeline(canvas)
     return { ...result, name: file.name }
+  }
+
+  // ── PROCESS EVERY PAGE OF A FILE ─────────────────────────
+  // (2026-07-01) Returns an ARRAY of processed pages. A PDF yields one entry
+  // per page; an image yields a single entry. Used by the BOL path so a
+  // multi-page PDF becomes multiple BOLs.
+  async function processFileAllPages(file, isPdf) {
+    if (isPdf) {
+      const canvases = await renderPdfAllPages(file)
+      const total = canvases.length
+      return canvases.map((canvas, idx) => {
+        const result = applyBWPipeline(canvas)
+        const pageName = total > 1
+          ? file.name + ' (p' + (idx + 1) + '/' + total + ')'
+          : file.name
+        return { ...result, name: pageName }
+      })
+    }
+    const canvas = await imageFileToCanvas(file)
+    const result = applyBWPipeline(canvas)
+    return [{ ...result, name: file.name }]
   }
 
   // ── RAW IMAGE FALLBACK — never lose a BOL ────────────────
@@ -434,35 +493,42 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
   }
 
   // ── BOL UPLOAD ───────────────────────────────────────────
-  // ROBUST: each file is processed INDEPENDENTLY. The preferred path is the
-  // B&W pipeline (processFile). If that throws for a given file — most commonly
-  // a PDF when PDF.js is blocked by CSP — we fall back to rawImageFallback so
-  // the BOL is STILL added. One bad file can never block the rest, and a
-  // PDF.js failure can never block BOLs the way it used to.
+  // ROBUST + MULTI-PAGE: each file is processed INDEPENDENTLY. A PDF is expanded
+  // to ONE BOL PER PAGE (processFileAllPages) so a 16-page PDF becomes 16 BOLs.
+  // The 50-BOL cap is enforced across the expanded pages. If the B&W/PDF.js
+  // pipeline throws for a file — most commonly a PDF when PDF.js is blocked by
+  // CSP — we fall back to rawImageFallback so the BOL is STILL added. One bad
+  // file can never block the rest.
   async function handleBOL(e) {
     const files = Array.from(e.target.files || [])
     if (!files.length) return
-    const remaining = MAX_BOLS - load.bols.length
+    let remaining = MAX_BOLS - load.bols.length
     if (remaining <= 0) { showToast('Max 50 BOLs reached'); return }
-    const toProcess = files.slice(0, remaining)
     setBolLoading(true)
     showToast('📷 Processing BOL scans...')
 
     const processed = []
-    let cleaned = 0, raw = 0, placeheld = 0, failed = 0
+    let cleaned = 0, raw = 0, placeheld = 0, failed = 0, capped = 0
 
-    for (const f of toProcess) {
+    for (const f of files) {
+      if (remaining <= 0) { capped++; continue }
       const isPdf = await sniffIsPdf(f)
       try {
-        const out = await processFile(f, isPdf)
-        processed.push(out)
-        cleaned++
+        // Expand PDFs to one page each; images return a single-element array.
+        const pages = await processFileAllPages(f, isPdf)
+        for (const page of pages) {
+          if (remaining <= 0) { capped++; continue }
+          processed.push(page)
+          cleaned++
+          remaining--
+        }
       } catch (errPrimary) {
         // Pipeline failed (PDF.js blocked, decode error, etc). Fall back so the
         // BOL is never lost.
         try {
           const fb = await rawImageFallback(f, isPdf)
           processed.push(fb)
+          remaining--
           if (fb.placeholder) placeheld++; else raw++
         } catch (errFb) {
           failed++
@@ -480,6 +546,7 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
     if (cleaned)   parts.push(cleaned + ' added')
     if (raw)       parts.push(raw + ' added (original photo)')
     if (placeheld) parts.push(placeheld + ' PDF noted — add a photo of the page')
+    if (capped)    parts.push(capped + ' skipped (50 max)')
     if (failed)    parts.push(failed + ' failed')
     if (processed.length) {
       showToast('✅ BOL: ' + parts.join(', '))
