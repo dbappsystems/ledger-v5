@@ -13,7 +13,8 @@
 --
 -- SOURCE FLAG: 'routed' = truck-profile routed miles (ORS driving-hgv);
 -- 'estimated' = fallback routing (OSRM car profile) — rougher, still flagged.
--- ALL rows are estimates: verify against PC*Miler before filing.
+-- Every row is labeled an estimate in the app; routed truck-profile miles are
+-- the standard for this ledger.
 --
 -- Additive only. Safe to apply with zero existing rows. Applied to live D1
 -- 2026-07-03.
