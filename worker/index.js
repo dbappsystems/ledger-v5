@@ -112,6 +112,27 @@ async function diagV4Receipt(kind, id) {
   }
 }
 
+// ── GEOCODING (Nominatim) ────────────────────────────────────────────────
+// Address -> {lat, lon} via OpenStreetMap Nominatim. Free, no key (Rule 14:
+// never a secret in code). One stop at a time; caller sequences. Returns null
+// on any miss so a stop can be saved un-geocoded and resolved later.
+async function geocodeAddress({ address, city, state, zip }) {
+  const q = [address, city, state, zip].filter(Boolean).join(', ').trim();
+  if (!q) return null;
+  try {
+    const u = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q);
+    const res = await fetch(u, { headers: { 'User-Agent': 'LoadLedgers/1.0 (dbappsystems.com)' } });
+    if (!res.ok) return null;
+    const arr = await res.json();
+    if (!Array.isArray(arr) || !arr.length) return null;
+    const lat = parseFloat(arr[0].lat), lon = parseFloat(arr[0].lon);
+    if (isNaN(lat) || isNaN(lon)) return null;
+    return { lat, lon };
+  } catch (_) {
+    return null;
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url  = new URL(request.url);
@@ -1446,6 +1467,121 @@ export default {
         if (!row) return json({ error: 'Charge not found' }, 404);
         await env.DB.prepare('DELETE FROM recurring_charges WHERE id=? AND tenant_id=?').bind(id, T).run();
         return json({ ok: true });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── LOAD STOPS (per-stop geocoded addresses for address-to-address IFTA) ──
+    // Child rows of a load: each pickup/delivery with a real address + lat/lon,
+    // sequenced in run order. The IFTA mileage engine routes over these coords
+    // point-to-point to attribute miles per state. Mirrors the app's tenant-
+    // scoped GET/POST/PATCH/DELETE pattern. Geocoding runs on POST (and on PATCH
+    // when address fields change) via Nominatim; a stop still saves if geocode
+    // misses, and geocoded_at stamps success so misses can be retried later.
+    if (path.startsWith('/api/load-stops/') && !path.endsWith('/geocode') && request.method === 'GET') {
+      try {
+        const loadId = path.split('/')[3];
+        const owns = await env.DB.prepare('SELECT id FROM loads WHERE id=? AND tenant_id=?').bind(loadId, T).first();
+        if (!owns) return json({ error: 'Load not found' }, 404);
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM load_stops WHERE tenant_id=? AND load_id=? ORDER BY sequence ASC, created_at ASC'
+        ).bind(T, loadId).all();
+        return json(results);
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    if (path === '/api/load-stop' && request.method === 'POST') {
+      try {
+        const b = await request.json();
+        if (!b.load_id) return json({ error: 'Missing load_id' }, 400);
+        const owns = await env.DB.prepare('SELECT id FROM loads WHERE id=? AND tenant_id=?').bind(b.load_id, T).first();
+        if (!owns) return json({ error: 'Load not found' }, 404);
+        const id = crypto.randomUUID();
+        const stopType = (b.stop_type === 'pickup') ? 'pickup' : 'delivery';
+        const geo = await geocodeAddress({ address: b.address, city: b.city, state: b.state, zip: b.zip });
+        const lat = geo ? geo.lat : null;
+        const lon = geo ? geo.lon : null;
+        const geocodedAt = geo ? new Date().toISOString() : '';
+        await env.DB.prepare(`
+          INSERT INTO load_stops
+            (id, tenant_id, load_id, sequence, stop_type, address, city, state, zip,
+             lat, lon, appointment, geocoded_at, created_at, updated_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))
+        `).bind(
+          id, T, b.load_id, parseInt(b.sequence) || 0, stopType,
+          b.address || '', b.city || '', (b.state || '').toUpperCase().slice(0, 2), b.zip || '',
+          lat, lon, b.appointment || '', geocodedAt,
+        ).run();
+        return json({ id, geocoded: !!geo, lat, lon });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    if (path.startsWith('/api/load-stop/') && path.split('/').length === 4 && request.method === 'PATCH') {
+      try {
+        const id = path.split('/')[3];
+        const b = await request.json();
+        const existing = await env.DB.prepare('SELECT * FROM load_stops WHERE id=? AND tenant_id=?').bind(id, T).first();
+        if (!existing) return json({ error: 'Stop not found' }, 404);
+        const fields = []; const values = [];
+        if (b.sequence    !== undefined) { fields.push('sequence=?');    values.push(parseInt(b.sequence) || 0); }
+        if (b.stop_type   !== undefined) { fields.push('stop_type=?');   values.push(b.stop_type === 'pickup' ? 'pickup' : 'delivery'); }
+        if (b.address     !== undefined) { fields.push('address=?');     values.push(String(b.address)); }
+        if (b.city        !== undefined) { fields.push('city=?');        values.push(String(b.city)); }
+        if (b.state       !== undefined) { fields.push('state=?');       values.push(String(b.state).toUpperCase().slice(0, 2)); }
+        if (b.zip         !== undefined) { fields.push('zip=?');         values.push(String(b.zip)); }
+        if (b.appointment !== undefined) { fields.push('appointment=?'); values.push(String(b.appointment)); }
+        // If any address component changed, re-geocode from the merged values.
+        const addrChanged = ['address','city','state','zip'].some(k => b[k] !== undefined);
+        if (addrChanged) {
+          const geo = await geocodeAddress({
+            address: b.address !== undefined ? b.address : existing.address,
+            city:    b.city    !== undefined ? b.city    : existing.city,
+            state:   b.state   !== undefined ? b.state   : existing.state,
+            zip:     b.zip     !== undefined ? b.zip     : existing.zip,
+          });
+          if (geo) {
+            fields.push('lat=?');         values.push(geo.lat);
+            fields.push('lon=?');         values.push(geo.lon);
+            fields.push('geocoded_at=?'); values.push(new Date().toISOString());
+          }
+        }
+        if (fields.length === 0) return json({ error: 'Nothing to update' }, 400);
+        fields.push("updated_at=datetime('now')");
+        values.push(id, T);
+        await env.DB.prepare('UPDATE load_stops SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
+        return json({ ok: true });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    if (path.startsWith('/api/load-stop/') && path.split('/').length === 4 && request.method === 'DELETE') {
+      try {
+        const id = path.split('/')[3];
+        const row = await env.DB.prepare('SELECT id FROM load_stops WHERE id=? AND tenant_id=?').bind(id, T).first();
+        if (!row) return json({ error: 'Stop not found' }, 404);
+        await env.DB.prepare('DELETE FROM load_stops WHERE id=? AND tenant_id=?').bind(id, T).run();
+        return json({ ok: true });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── RE-GEOCODE any stops that missed on first save (retry misses) ────────
+    if (path.startsWith('/api/load-stops/') && path.endsWith('/geocode') && request.method === 'POST') {
+      try {
+        const loadId = path.split('/')[3];
+        const owns = await env.DB.prepare('SELECT id FROM loads WHERE id=? AND tenant_id=?').bind(loadId, T).first();
+        if (!owns) return json({ error: 'Load not found' }, 404);
+        const { results } = await env.DB.prepare(
+          "SELECT * FROM load_stops WHERE tenant_id=? AND load_id=? AND (lat IS NULL OR lon IS NULL)"
+        ).bind(T, loadId).all();
+        let fixed = 0;
+        for (const s of results) {
+          const geo = await geocodeAddress({ address: s.address, city: s.city, state: s.state, zip: s.zip });
+          if (geo) {
+            await env.DB.prepare(
+              "UPDATE load_stops SET lat=?, lon=?, geocoded_at=?, updated_at=datetime('now') WHERE id=? AND tenant_id=?"
+            ).bind(geo.lat, geo.lon, new Date().toISOString(), s.id, T).run();
+            fixed++;
+          }
+        }
+        return json({ ok: true, attempted: results.length, fixed });
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
