@@ -29,6 +29,7 @@ import DriverProfile    from './DriverProfile.jsx'
 import Maintenance      from './Maintenance.jsx'
 import Assets           from './Assets.jsx'
 import Tax              from './Tax.jsx'
+import IftaEstimate     from './IftaEstimate.jsx'
 import SettlementReport from './SettlementReport.jsx'
 import BookkeeperProfile from './BookkeeperProfile.jsx'
 import Feedback         from './Feedback.jsx'
@@ -215,6 +216,10 @@ export default function App() {
       origin: '', destination: '', pickup_date: '', delivery_date: '',
       base_pay: '', bols: [], lumpers: [], incidentals: [], comdatas: [],
       detention: '', pallets: '', notes: '', status: 'draft',
+      // Multi-stop IFTA: filled by the rate con scan (RateCon.jsx), saved to
+      // load_stops by Invoice.jsx STEP 1b. Explicit here so a new load never
+      // carries the previous scan's stops.
+      stops: [],
     }
   }
 
@@ -467,6 +472,8 @@ export default function App() {
           <div>
             <div className="section-title" style={{ paddingLeft:4 }}>SETTLEMENT REPORTS</div>
             <SettlementReport driverName={driver} loads={loads} showToast={showToast} ownerCutPct={ownerCutPct} />
+            <div style={{ height:32 }} />
+            <IftaEstimate driver={driver} />
             <div style={{ height:32 }} />
             <Tax loads={loads} driver={driver} />
             <div style={{ height:32 }} />
