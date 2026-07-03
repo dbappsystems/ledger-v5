@@ -4,6 +4,8 @@
 // OCR model: claude-sonnet-4-6 — matches the proven-working V4 worker. Do not
 // change to a dated 4.5 snapshot; V4 confirms 4-6 is valid on this API key.
 
+import { handleRouteIfta, handleIftaSummary } from './ifta.js';
+
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
@@ -284,7 +286,7 @@ export default {
         const res = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST', headers,
           body: JSON.stringify({
-            model: 'claude-sonnet-4-6', max_tokens: 1024,
+            model: 'claude-sonnet-4-6', max_tokens: 2048, // raised from 1024: multi-stop rateconf stops[] needs headroom; a cap, not a cost
             messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }],
           }),
         });
@@ -1585,6 +1587,34 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
+    // ── ESTIMATED IFTA (routed truck-profile miles, split by state) ──────
+    // POST /api/loads/:id/route-ifta
+    //   Routes the load's sequenced geocoded stops (load_stops) over real
+    //   highways — ORS driving-hgv truck profile when ORS_API_KEY secret is
+    //   set, OSRM fallback otherwise — splits the geometry at state lines,
+    //   and rewrites this load's ifta_miles rows (loaded legs + the deadhead
+    //   leg from the prior load's last stop to this load's first pickup).
+    //   Idempotent: safe to re-run after editing stops.
+    // GET /api/ifta/:driver?from=&to=
+    //   Ongoing estimated IFTA ledger: per-state totals, loaded/deadhead
+    //   split, over an optional entry_date window.
+    if (path.startsWith('/api/loads/') && path.endsWith('/route-ifta') && request.method === 'POST') {
+      try {
+        const loadId = path.slice('/api/loads/'.length, -('/route-ifta'.length));
+        const out = await handleRouteIfta(env, T, loadId);
+        return json(out.body, out.status);
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    if (path.startsWith('/api/ifta/') && request.method === 'GET') {
+      try {
+        const driver = path.split('/')[3];
+        if (!driver) return json({ error: 'Missing driver' }, 400);
+        const out = await handleIftaSummary(env, T, driver, url);
+        return json(out.body, out.status);
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
     if (path === '/api/contact' && request.method === 'POST') {
       try {
         const b = await request.json();
@@ -1632,10 +1662,16 @@ Extract ONLY these fields and return ONLY valid JSON, nothing else:
   "delivery_location": "",
   "pickup_date": "",
   "delivery_date": "",
-  "base_pay": ""
+  "base_pay": "",
+  "stops": [
+    {"type": "pickup", "address": "", "city": "", "state": "", "zip": "", "date": ""}
+  ]
 }
 Rules:
 - base_pay must be a number string like "1250.00" with no dollar sign
+- stops must list EVERY pickup and EVERY delivery shown on the document as its own object, in the order the truck runs them (pickups first, then deliveries in the order listed unless the document shows a different run order)
+- stop type is exactly "pickup" or "delivery"; address is the street line only; state is the 2-letter code; date as MM/DD/YYYY if shown
+- pickup_location stays the FIRST pickup city/state and delivery_location stays the LAST delivery city/state, exactly as before
 - broker_mc is the MC number or DOT number of the brokerage (digits only, no "MC" prefix)
 - broker_phone is the broker contact phone number
 - broker_email is the broker billing or contact email address
