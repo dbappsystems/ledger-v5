@@ -717,6 +717,56 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
       return
     }
 
+    // ── STEP 1b: SAVE STOPS + FIRE IFTA ROUTING ──────────
+    // The rate con scan (RateCon.jsx) carries every pickup and delivery on
+    // load.stops in run order: { type, address, city, state, zip, date }.
+    // Each becomes a load_stops row (the Worker geocodes on save), then
+    // POST /api/loads/{id}/route-ifta routes the stops over real highways
+    // and writes this load's per-state ifta_miles — including the deadhead
+    // leg from the prior load's last drop.
+    //
+    // NON-BLOCKING BY DESIGN: the invoice is already saved. Nothing in this
+    // step is allowed to stop the PDF from building — any failure here logs,
+    // toasts once, and the flow continues. route-ifta is idempotent, so a
+    // missed run can always be re-fired later without duplicating miles.
+    try {
+      let stopRows = Array.isArray(load.stops) ? load.stops : []
+      if (!stopRows.length) {
+        // Manual-entry fallback (no RC scan): derive a two-stop run from the
+        // typed origin/destination. The Worker geocoder takes the full
+        // free-text string in the city field ("Dallas, TX" geocodes fine).
+        stopRows = []
+        if (load.origin)      stopRows.push({ type: 'pickup',   city: load.origin,      date: load.pickup_date   || '' })
+        if (load.destination) stopRows.push({ type: 'delivery', city: load.destination, date: load.delivery_date || '' })
+      }
+      if (stopRows.length >= 2) {
+        showToast('🗺️ Saving stops for IFTA...')
+        for (let i = 0; i < stopRows.length; i++) {
+          const s = stopRows[i]
+          await apiClient('/api/load-stop', {
+            method: 'POST',
+            json: {
+              load_id:   savedLoadId,
+              sequence:  i + 1,
+              stop_type: s.type === 'pickup' ? 'pickup' : 'delivery',
+              address:   s.address || '',
+              city:      s.city    || '',
+              state:     s.state   || '',
+              zip:       s.zip     || '',
+              appointment: s.date  || '',
+            },
+          })
+        }
+        // Fire-and-forget: routing calls external services and can take a few
+        // seconds. The IFTA card refreshes from the ledger whenever opened.
+        apiClient('/api/loads/' + savedLoadId + '/route-ifta', { method: 'POST' })
+          .catch(err => console.error('route-ifta error:', err))
+      }
+    } catch (err) {
+      console.error('load-stop save error:', err)
+      showToast('⚠️ IFTA stops skipped: ' + (err.message || '').slice(0, 50))
+    }
+
     // ── STEP 2: BUILD PDF IN MEMORY ───────────────────────
     const doc = new jsPDF({ unit: 'pt', format: 'letter' })
     const W = 612, M = 40
