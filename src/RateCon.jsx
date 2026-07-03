@@ -30,6 +30,10 @@ export default function RateCon({ load, setLoad, driver, showToast, onNext }) {
       pickup_date:   data.pickup_date        || '',
       delivery_date: data.delivery_date      || data.deldate  || '',
       base_pay:      data.base_pay           || data.rate     || '',
+      // Multi-stop IFTA: the worker's rateconf prompt now returns every pickup
+      // and delivery as its own object in run order. Carried on the load so
+      // Invoice.jsx can save load_stops rows and fire the IFTA route after save.
+      stops:         Array.isArray(data.stops) ? data.stops : [],
     }
   }
 
@@ -71,6 +75,11 @@ export default function RateCon({ load, setLoad, driver, showToast, onNext }) {
 
         for (const f of fields) {
           if (!merged[f] && parsed[f]) merged[f] = parsed[f]
+        }
+        // stops is an array, not a text field: first page that yields stops wins
+        // (a multi-page RC lists all stops on page 1; later pages are terms/BOL).
+        if ((!merged.stops || !merged.stops.length) && parsed.stops && parsed.stops.length) {
+          merged.stops = parsed.stops
         }
       }
 
