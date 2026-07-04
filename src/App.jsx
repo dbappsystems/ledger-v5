@@ -128,6 +128,12 @@ export default function App() {
 
   const activeDriver = role === 'bookkeeper' ? viewDriver : driver
 
+  // BOOK NOW, BILL LATER: a booked load is a contract, not earnings. Every
+  // settlement, tax, and bookkeeper input gets this filtered list so booked
+  // rows can never move money math until they are invoiced. The Loads list
+  // itself still shows booked cards (teal chip) so nothing is hidden.
+  const billableLoads = loads.filter(l => l.status !== 'booked')
+
   async function fetchLoads() {
     try {
       const data = await api('/api/loads')
@@ -220,6 +226,13 @@ export default function App() {
       // load_stops by Invoice.jsx STEP 1b. Explicit here so a new load never
       // carries the previous scan's stops.
       stops: [],
+      // BOOK NOW, BILL LATER: rc_pages carries the scanned rate con page bytes
+      // so the RC PDF can be stored to R2 (at booking, or at billing via
+      // Invoice.jsx STEP 1c). booked_id is set only when billing a previously
+      // booked load — Invoice.jsx then PATCHes that row instead of inserting.
+      // Explicit here so a new load never carries the previous load's pages.
+      rc_pages: [],
+      booked_id: null,
     }
   }
 
@@ -448,7 +461,7 @@ export default function App() {
 
             {loadsSubView === 'ratecon' && !isBookkeeper && (
               <div style={{ flex:1, overflowY:'auto' }}>
-                <RateCon load={load} setLoad={setLoad} driver={driver} showToast={showToast} onNext={() => setLoadsSubView('invoice')} />
+                <RateCon load={load} setLoad={setLoad} driver={driver} showToast={showToast} onNext={() => setLoadsSubView('invoice')} onBooked={() => { fetchLoads(); afterInvoiceSave() }} />
               </div>
             )}
 
@@ -471,11 +484,11 @@ export default function App() {
         {tab === 'profile' && !isBookkeeper && (
           <div>
             <div className="section-title" style={{ paddingLeft:4 }}>SETTLEMENT REPORTS</div>
-            <SettlementReport driverName={driver} loads={loads} showToast={showToast} ownerCutPct={ownerCutPct} />
+            <SettlementReport driverName={driver} loads={billableLoads} showToast={showToast} ownerCutPct={ownerCutPct} />
             <div style={{ height:32 }} />
             <IftaEstimate driver={driver} />
             <div style={{ height:32 }} />
-            <Tax loads={loads} driver={driver} />
+            <Tax loads={billableLoads} driver={driver} />
             <div style={{ height:32 }} />
             <DriverProfile driver={driver} showToast={showToast} />
             <div style={{ height:24 }} />
@@ -484,7 +497,7 @@ export default function App() {
 
         {/* -- PROFILE TAB - BOOKKEEPER ------------------ */}
         {tab === 'profile' && isBookkeeper && (
-          <BookkeeperProfile loads={loads} showToast={showToast} ownerCutPct={ownerCutPct} />
+          <BookkeeperProfile loads={billableLoads} showToast={showToast} ownerCutPct={ownerCutPct} />
         )}
 
         {/* -- REPAIRS TAB ------------------------------- */}
