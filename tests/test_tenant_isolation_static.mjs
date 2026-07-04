@@ -12,8 +12,9 @@
 //   2) Confirms public routes (login/logout/OPTIONS) appear BEFORE the gate,
 //      and that the gate (`await requireTenant`) sits above all data routes.
 //   3) For every DB statement, asserts it references tenant_id — except the
-//      auth-plumbing statements (sessions + users-by-id/email/upgrade) and the
-//      tenants table keyed by its own id (the tenant reading/writing its OWN row).
+//      pre-tenant plumbing statements (sessions, users-by-id/email/upgrade,
+//      and the public signup_requests insert) and the tenants table keyed by
+//      its own id (the tenant reading/writing its OWN row).
 //
 // RUN:  node tests/test_tenant_isolation_static.mjs worker/index.js
 //       (exit 0 = pass, 1 = fail)
@@ -57,18 +58,24 @@ while ((m = stmtRegex.exec(src)) !== null) {
   const isData = /\b(FROM|INTO|UPDATE)\b/.test(upper);
   if (!isData) continue;
 
-  // Allowed auth-plumbing statements (sessions + user auth lookups).
+  // Allowed PRE-TENANT plumbing statements. These run before a tenant exists
+  // or are keyed by their own identity, so tenant_id does not apply:
+  //   - sessions        : session lifecycle, keyed by opaque token
+  //   - users by id/email: auth lookup + first-login password upgrade
+  //   - signup_requests : the PUBLIC /api/apply route — a prospective company
+  //                       has no tenant yet, so the insert cannot carry one
   const touchesSessions = /\bSESSIONS\b/.test(upper);
   const usersById       = /FROM USERS WHERE ID = \?/.test(upper);
   const usersByEmail    = /FROM USERS WHERE LOWER\(EMAIL\)/.test(upper);
   const usersUpgrade    = /UPDATE USERS SET PASSWORD=\?, SALT=\? WHERE ID=\?/.test(upper);
   const insertSession   = /INSERT INTO SESSIONS/.test(upper);
+  const signupRequest   = /INSERT INTO SIGNUP_REQUESTS/.test(upper);
   // The tenants table IS the tenant: keyed by its own id, and these routes bind
   // the token's tenant (T) as that id, so a tenant can only read/write its OWN
   // row. "FROM/UPDATE tenants ... WHERE id = ?" is correctly scoped.
   const tenantsSelfRow  = /\bFROM TENANTS WHERE ID = \?/.test(upper) ||
                           /\bUPDATE TENANTS SET .* WHERE ID=\?/.test(upper);
-  if (touchesSessions || usersById || usersByEmail || usersUpgrade || insertSession || tenantsSelfRow) continue;
+  if (touchesSessions || usersById || usersByEmail || usersUpgrade || insertSession || signupRequest || tenantsSelfRow) continue;
 
   if (/TENANT_ID/.test(upper)) ok();
   else fail(`Line ${lineNo}: data statement missing tenant_id -> ${sql.slice(0, 90)}`);
