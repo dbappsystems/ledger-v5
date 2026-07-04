@@ -149,7 +149,9 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
         apiClient('/api/fuel/' + driver).catch(() => []),
         apiClient('/api/escrow-payments/' + driver).catch(() => []),
       ])
-      const loads       = Array.isArray(allLoads)   ? allLoads   : []
+      // Booked-not-yet-billed loads are excluded: earnings don't exist until
+      // the load is invoiced, so they must not inflate the running balance.
+      const loads       = (Array.isArray(allLoads) ? allLoads : []).filter(l => l.status !== 'booked')
       const fuelEntries = Array.isArray(fuelData)   ? fuelData   : []
       const payments    = Array.isArray(escrowData) ? escrowData : []
 
