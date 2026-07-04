@@ -209,7 +209,17 @@ input::placeholder, textarea::placeholder { color: var(--grey); }
 .status-chip.booked   { background: #0a3a44; color: #4dd0e1; }
 
 /* -- Buttons (scan-btn family) -------------------------------- */
+/* Full-width by default: every scan-btn spans its container and centers its
+   contents, so a short label (SCAN RATE CONFIRMATION) fills the same bar width
+   as a long one (NEXT — ADD RECEIPTS…). Icon + text align on one centered row
+   with a small gap. This is the single source of truth for the button family;
+   the SCANNING / SCANNED / secondary / success / danger states all inherit it. */
 .scan-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border: none;
   border-radius: 8px;
   background: var(--amber);
@@ -219,7 +229,7 @@ input::placeholder, textarea::placeholder { color: var(--grey); }
   font-size: 14px;
   letter-spacing: 0.04em;
   cursor: pointer;
-  padding: 12px 16px;
+  padding: 14px 16px;
 }
 .scan-btn.secondary { background: var(--navy3); color: var(--white); border: 1px solid var(--border); }
 .scan-btn.success   { background: var(--green); color: #fff; }
