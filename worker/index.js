@@ -415,6 +415,40 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
+    // ── RATE CON STORAGE (R2) ────────────────────────────────────────────
+    // The rate confirmation is the load's CONTRACT. The client assembles the
+    // scanned RC into one PDF and stores it here at booking (status='booked')
+    // or at billing time. Same tenant-walled R2 pattern as /api/upload-pdf.
+    if (path === '/api/ratecon-pdf' && request.method === 'POST') {
+      try {
+        const { base64, loadId } = await request.json();
+        if (!base64 || !loadId) return json({ error: 'Missing base64 or loadId' }, 400);
+        if (!env.R2) return json({ error: 'R2 not configured' }, 500);
+        const owns = await env.DB.prepare('SELECT id FROM loads WHERE id=? AND tenant_id=?').bind(loadId, T).first();
+        if (!owns) return json({ error: 'Load not found' }, 404);
+        const binary = atob(base64); const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        await env.R2.put(T + '/ratecons/' + loadId + '.pdf', bytes, { httpMetadata: { contentType: 'application/pdf' } });
+        const rateConUrl = '/api/ratecon/' + loadId;
+        await env.DB.prepare('UPDATE loads SET rate_conf_url=? WHERE id=? AND tenant_id=?').bind(rateConUrl, loadId, T).run();
+        return json({ ok: true, url: rateConUrl });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    if (path.startsWith('/api/ratecon/') && request.method === 'GET') {
+      try {
+        const loadId = path.replace('/api/ratecon/', '');
+        if (!env.R2) return json({ error: 'R2 not configured' }, 500);
+        const owns = await env.DB.prepare('SELECT id FROM loads WHERE id=? AND tenant_id=?').bind(loadId, T).first();
+        if (!owns) return new Response('Rate con not found', { status: 404, headers: CORS });
+        const object = await env.R2.get(T + '/ratecons/' + loadId + '.pdf');
+        if (!object) return new Response('Rate con not found', { status: 404, headers: CORS });
+        return new Response(object.body, {
+          headers: { ...CORS, 'Content-Type': 'application/pdf', 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
+        });
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
     // ── SAVE LEGACY V4 INVOICE INTO V5 (fetch V4 URL -> R2) ──────────────
     if (path.startsWith('/api/invoice/') && path.endsWith('/save') && request.method === 'POST') {
       try {
@@ -809,6 +843,19 @@ export default {
         const b = await request.json();
         const fields = []; const values = [];
         if (b.status       !== undefined) { fields.push('status=?');       values.push(b.status); }
+        // BOOKED→INVOICED billing path: the invoice form may correct any of the
+        // fields captured at booking, plus the line-item totals.
+        if (b.broker_name      !== undefined) { fields.push('broker_name=?');      values.push(b.broker_name); }
+        if (b.broker_email     !== undefined) { fields.push('broker_email=?');     values.push(b.broker_email); }
+        if (b.load_number      !== undefined) { fields.push('load_number=?');      values.push(b.load_number); }
+        if (b.origin           !== undefined) { fields.push('origin=?');           values.push(b.origin); }
+        if (b.destination      !== undefined) { fields.push('destination=?');      values.push(b.destination); }
+        if (b.pickup_date      !== undefined) { fields.push('pickup_date=?');      values.push(b.pickup_date); }
+        if (b.delivery_date    !== undefined) { fields.push('delivery_date=?');    values.push(b.delivery_date); }
+        if (b.bol_count        !== undefined) { fields.push('bol_count=?');        values.push(parseInt(b.bol_count) || 0); }
+        if (b.lumper_total     !== undefined) { fields.push('lumper_total=?');     values.push(parseFloat(b.lumper_total)     || 0); }
+        if (b.incidental_total !== undefined) { fields.push('incidental_total=?'); values.push(parseFloat(b.incidental_total) || 0); }
+        if (b.comdata_total    !== undefined) { fields.push('comdata_total=?');    values.push(parseFloat(b.comdata_total)    || 0); }
         if (b.fuel         !== undefined) { fields.push('fuel=?');         values.push(parseFloat(b.fuel) || 0); }
         if (b.base_pay     !== undefined) { fields.push('base_pay=?');     values.push(parseFloat(b.base_pay)  || 0); }
         if (b.detention    !== undefined) { fields.push('detention=?');    values.push(parseFloat(b.detention) || 0); }
@@ -842,6 +889,7 @@ export default {
           return json({ error: 'Not authorized' }, 403);
         }
         if (env.R2) await env.R2.delete(T + '/invoices/' + id + '.pdf').catch(() => {});
+        if (env.R2) await env.R2.delete(T + '/ratecons/' + id + '.pdf').catch(() => {});
         await env.DB.prepare('DELETE FROM loads WHERE id=? AND tenant_id=?').bind(id, T).run();
         return json({ ok: true });
       } catch(e) { return json({ error: e.message }, 500); }
