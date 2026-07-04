@@ -420,13 +420,7 @@ export default function RateCon({ load, setLoad, driver, showToast, onNext, onBo
           ) : scanned ? (
             <>✓ SCANNED — TAP TO RESCAN</>
           ) : (
-            <>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{width:22,height:22}}>
-                <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
-                <circle cx="12" cy="13" r="4"/>
-              </svg>
-              SCAN RATE CONFIRMATION
-            </>
+            <>SCAN RATE CONFIRMATION</>
           )}
         </button>
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--grey)' }}>
