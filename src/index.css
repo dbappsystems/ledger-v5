@@ -206,6 +206,7 @@ input::placeholder, textarea::placeholder { color: var(--grey); }
 .status-chip.billed   { background: #5a3e00; color: #ffce6b; }
 .status-chip.paid     { background: #143d1c; color: #79e08b; }
 .status-chip.draft    { background: var(--navy3); color: var(--grey); }
+.status-chip.booked   { background: #0a3a44; color: #4dd0e1; }
 
 /* -- Buttons (scan-btn family) -------------------------------- */
 .scan-btn {
