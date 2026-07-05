@@ -5,6 +5,7 @@
 // change to a dated 4.5 snapshot; V4 confirms 4-6 is valid on this API key.
 
 import { handleRouteIfta, handleIftaSummary } from './ifta.js';
+import { handleRatecons } from './ratecons.js';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -291,6 +292,11 @@ export default {
       return json({ error: e.message }, e.status || 401);
     }
     const T = ctx.tenant_id;
+
+    // Standalone rate confirmations (upload now, link at delivery). Handled
+    // in its own module; returns a Response when it owns the path, else null.
+    const rcResp = await handleRatecons(request, env, ctx, T, url);
+    if (rcResp) return rcResp;
 
     if (path === '/api/ocr' && request.method === 'POST') {
       try {
