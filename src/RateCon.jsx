@@ -26,7 +26,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { jsPDF } from 'jspdf'
-import { api as apiClient } from './api.js'
+import { api as apiClient, apiUrl, getToken } from './api.js'
 
 // ── RC PDF ASSEMBLY + R2 STORE ──────────────────────────────────────────────
 // Shared by RateCon (SAVE AS BOOKED) and Invoice.jsx (STEP 1c bill-time store).
@@ -73,6 +73,62 @@ export default function RateCon({ load, setLoad, driver, showToast, onNext, onBo
   const [booking,  setBooking]  = useState(false)
   const [bookedLoads, setBookedLoads] = useState([])
   const fileRef = useRef()
+
+  // ── SAVED RATE CONS (upload now → pull at delivery) ──────────────────────
+  // Standalone rate cons banked BEFORE a load exists — driver-walled by the
+  // worker (tenant + driver) via the rate_confirmations table + R2. Upload a
+  // PDF/photo, tap to open, delete when no longer needed. When the load is
+  // later billed the row auto-links and drops off this pending list. This is
+  // additive: it never touches the SCAN → BOOK/BILL flow or any settlement math.
+  const [savedRcs, setSavedRcs]       = useState([])
+  const [rcUploading, setRcUploading] = useState(false)
+  const rcUploadRef = useRef()
+
+  useEffect(() => { loadSavedRcs() /* eslint-disable-next-line */ }, [driver])
+
+  async function loadSavedRcs() {
+    try {
+      const rows = await apiClient('/api/ratecons/' + encodeURIComponent(driver) + '?status=pending')
+      setSavedRcs(Array.isArray(rows) ? rows : [])
+    } catch { setSavedRcs([]) }
+  }
+
+  async function handleRcUpload(e) {
+    const file = e.target.files && e.target.files[0]
+    if (!file) return
+    setRcUploading(true)
+    try {
+      // Decide PDF by the file's real first bytes (iOS type/name are unreliable).
+      const head = new Uint8Array(await file.slice(0, 5).arrayBuffer())
+      const isPdf = head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46
+      const mediaType = isPdf ? 'application/pdf' : (file.type || 'image/jpeg')
+      const base64 = await toBase64(file)
+      await apiClient('/api/ratecons', { method: 'POST', json: { driver, base64, mediaType } })
+      showToast('✅ Rate con saved')
+      await loadSavedRcs()
+    } catch (err) {
+      showToast('❌ ' + ((err && err.message) || 'Upload failed').slice(0, 60))
+    } finally {
+      setRcUploading(false)
+      if (rcUploadRef.current) rcUploadRef.current.value = ''
+    }
+  }
+
+  // The file GET is tenant+token walled; the worker reads the token from ?t=.
+  function openSavedRc(id) {
+    const token = getToken()
+    const url = apiUrl('/api/ratecon-file/' + id) + (token ? ('?t=' + encodeURIComponent(token)) : '')
+    window.open(url, '_blank')
+  }
+
+  async function deleteSavedRc(id) {
+    try {
+      await apiClient('/api/ratecons/' + id, { method: 'DELETE' })
+      await loadSavedRcs()
+    } catch (err) {
+      showToast('❌ ' + ((err && err.message) || 'Delete failed').slice(0, 60))
+    }
+  }
 
   // ── PENDING BOOKED LOADS ─────────────────────────────────
   // Booked earlier, delivering now: pick it up here to bill it. Fetch is
@@ -426,6 +482,65 @@ export default function RateCon({ load, setLoad, driver, showToast, onNext, onBo
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--grey)' }}>
           Multi-page rate con? Select all photos at once — pages merge into one load.
         </div>
+      </div>
+
+      <div className="card">
+        <div className="section-title">📁 Saved Rate Cons — Upload Now, Pull at Delivery</div>
+        <input
+          ref={rcUploadRef}
+          type="file"
+          accept="application/pdf,image/*"
+          capture="environment"
+          style={{ display:'none' }}
+          onChange={handleRcUpload}
+        />
+        <button
+          className="scan-btn secondary"
+          style={{ width:'100%' }}
+          onClick={() => rcUploadRef.current.click()}
+          disabled={rcUploading}
+        >
+          {rcUploading ? 'UPLOADING…' : '⬆ UPLOAD / TAKE PHOTO OF RATE CON'}
+        </button>
+        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--grey)' }}>
+          Bank a rate con the day it arrives — it waits here until you bill the load.
+        </div>
+
+        {savedRcs.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            {savedRcs.map(rc => (
+              <div
+                key={rc.id}
+                style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8, padding:'10px 12px',
+                         borderRadius:10, background:'var(--navy3)', border:'1px solid var(--border)' }}
+              >
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:14, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                    {rc.broker_name || rc.load_number || 'Rate Con'}
+                  </div>
+                  <div style={{ fontSize:11, color:'var(--grey)', marginTop:2 }}>
+                    {(rc.uploaded_at || '').slice(0, 10)}
+                  </div>
+                </div>
+                <button
+                  className="scan-btn secondary"
+                  style={{ width:'auto', padding:'6px 12px', margin:0 }}
+                  onClick={() => openSavedRc(rc.id)}
+                >
+                  OPEN
+                </button>
+                <button
+                  onClick={() => deleteSavedRc(rc.id)}
+                  aria-label="Delete rate con"
+                  style={{ width:32, height:32, flexShrink:0, borderRadius:8, cursor:'pointer',
+                           background:'transparent', border:'1px solid var(--border)', color:'var(--grey)', fontWeight:900 }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="card">
