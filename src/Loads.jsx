@@ -530,14 +530,6 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
         ))}
       </div>
 
-      {/* Bulk save legacy V4 invoices into V5 for the current view */}
-      <button onClick={saveAllVisibleToV5} disabled={savingV5==='ALL'} style={{
-        display:'block', width:'100%', marginBottom:14, padding:'11px 0', borderRadius:9,
-        border:'1px solid var(--amber)', background: savingV5==='ALL' ? 'var(--navy3)' : 'transparent',
-        color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:800, fontSize:13,
-        letterSpacing:'0.05em', cursor: savingV5==='ALL' ? 'default' : 'pointer',
-      }}>{savingV5==='ALL' ? 'SAVING ALL TO V5…' : '⬇ SAVE ALL V4 INVOICES TO V5 (THIS VIEW)'}</button>
-
       {/* Leaderboard — one row per tenant driver, top earner crowned */}
       <div className="card" style={{ marginBottom:14 }}>
         <div className="section-title" style={{ marginBottom:10 }}>
