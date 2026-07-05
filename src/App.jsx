@@ -20,9 +20,16 @@
 // FEEDBACK: a floating in-app feedback bubble (<Feedback/>) is rendered only in
 // the logged-in app (never on the login screen). It posts comments to the DB
 // (POST /api/contact) — it does NOT send email. It floats above the tab bar.
+//
+// RATE CON QUEUE (2026-07-04): rate cons rest in their own screen
+// (RateConQueue.jsx), mounted as loadsSubView 'ratecon-queue' (driver only).
+// The scan page (RateCon.jsx) opens empty and reaches the queue via its 📥
+// QUEUE button (onOpenQueue); the queue's ← BACK returns to the scan page.
+// Recall of a saved con happens inline on the scan page, not here.
 
 import { useState, useEffect } from 'react'
 import RateCon          from './RateCon.jsx'
+import RateConQueue     from './RateConQueue.jsx'
 import Invoice          from './Invoice.jsx'
 import Loads            from './Loads.jsx'
 import DriverProfile    from './DriverProfile.jsx'
@@ -408,7 +415,7 @@ export default function App() {
   // -- MAIN APP ---------------------------------------------
   const isBookkeeper = role === 'bookkeeper'
   // LOADS breadcrumb shows only for drivers actively inside the new-load flow.
-  const showLoadsCrumb = !isBookkeeper && tab === 'loads' && (loadsSubView === 'ratecon' || loadsSubView === 'invoice')
+  const showLoadsCrumb = !isBookkeeper && tab === 'loads' && (loadsSubView === 'ratecon' || loadsSubView === 'invoice' || loadsSubView === 'ratecon-queue')
 
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100dvh' }}>
@@ -461,7 +468,13 @@ export default function App() {
 
             {loadsSubView === 'ratecon' && !isBookkeeper && (
               <div style={{ flex:1, overflowY:'auto' }}>
-                <RateCon load={load} setLoad={setLoad} driver={driver} showToast={showToast} onNext={() => setLoadsSubView('invoice')} onBooked={() => { fetchLoads(); afterInvoiceSave() }} />
+                <RateCon load={load} setLoad={setLoad} driver={driver} showToast={showToast} onNext={() => setLoadsSubView('invoice')} onBooked={() => { fetchLoads(); afterInvoiceSave() }} onOpenQueue={() => setLoadsSubView('ratecon-queue')} />
+              </div>
+            )}
+
+            {loadsSubView === 'ratecon-queue' && !isBookkeeper && (
+              <div style={{ flex:1, overflowY:'auto' }}>
+                <RateConQueue driver={driver} showToast={showToast} onBack={() => setLoadsSubView('ratecon')} />
               </div>
             )}
 
