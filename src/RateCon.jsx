@@ -19,15 +19,13 @@
 //   pre-fills every field and carries booked_id so Invoice.jsx PATCHes the
 //   existing row to status='invoiced' instead of inserting a duplicate.
 //
-// RATE CON QUEUE RECALL (2026-07-04):
-//   Rate cons rest in their OWN screen (RateConQueue.jsx), banked days before
-//   the load can be billed. This scan page stays EMPTY on open — no permanent
-//   upload card, no saved-cons list sitting as furniture. When billing starts
-//   the driver taps "📥 Use a saved rate con": an on-demand list drops open
-//   (fetched only on tap), they pick one, and the SAME scanner that runs a
-//   camera photo runs the queued con. On success the row is linked off the
-//   queue (status='linked') so it never gets billed twice. The upload/rest of
-//   a con lives only in RateConQueue.jsx — never here.
+// RATE CON QUEUE (2026-07-05):
+//   Rate cons rest in their OWN screen (RateConQueue.jsx), reached by the 📥
+//   QUEUE button (top-right). A con is uploaded there ahead of billing and
+//   opened there to view. There is ONE doorway to the queue — the QUEUE button
+//   — so the scan page stays clean: no inline recall toggle duplicating what
+//   the QUEUE button already does. The scanner here runs live camera/photo
+//   scans via runOcrOnFiles.
 //
 // MATH INTEGRITY: a booked row is written with net_pay=0 and all line-item
 //   totals 0 — earnings do not exist until the load is invoiced. The live
@@ -83,62 +81,6 @@ export default function RateCon({ load, setLoad, driver, showToast, onNext, onBo
   const [booking,  setBooking]  = useState(false)
   const [bookedLoads, setBookedLoads] = useState([])
   const fileRef = useRef()
-
-  // ── RATE CON QUEUE RECALL (on-demand, never permanent) ───────────────────
-  // The saved cons REST in RateConQueue.jsx. Here they are only RECALLED: the
-  // list is hidden until the driver taps "Use a saved rate con", fetched fresh
-  // on that tap, and closes again after a pick. Nothing sits on this page.
-  const [recallOpen,    setRecallOpen]    = useState(false)
-  const [recallRows,    setRecallRows]    = useState([])
-  const [recallLoading, setRecallLoading] = useState(false)
-
-  async function toggleRecall() {
-    // Closing — just hide it.
-    if (recallOpen) { setRecallOpen(false); return }
-    // Opening — fetch the pending queue fresh, on demand.
-    setRecallOpen(true)
-    setRecallLoading(true)
-    try {
-      const rows = await apiClient('/api/ratecons/' + encodeURIComponent(driver) + '?status=pending')
-      setRecallRows(Array.isArray(rows) ? rows : [])
-    } catch {
-      setRecallRows([])
-    } finally {
-      setRecallLoading(false)
-    }
-  }
-
-  // Recall one queued con and run the EXISTING scanner on it, exactly as if the
-  // driver had just photographed it. Fetch the stored bytes (tenant+token
-  // walled), wrap them in a File, feed runOcrOnFiles. On success link the row
-  // off the queue so it drops out and can never be billed twice.
-  async function scanSavedRc(rc) {
-    try {
-      const token = getToken()
-      const url = apiUrl('/api/ratecon-file/' + rc.id) + (token ? ('?t=' + encodeURIComponent(token)) : '')
-      const resp = await fetch(url)
-      if (!resp.ok) throw new Error('Could not load saved rate con')
-      const blob = await resp.blob()
-      const type = blob.type || rc.content_type || 'application/pdf'
-      const ext  = type.indexOf('pdf') !== -1 ? 'pdf' : 'jpg'
-      const file = new File([blob], 'ratecon-' + rc.id + '.' + ext, { type })
-
-      setRecallOpen(false)
-      const ok = await runOcrOnFiles([file])
-
-      // Only drop it off the queue if the scan actually produced a load. A
-      // failed OCR leaves the con in the queue so nothing is lost.
-      if (ok) {
-        try {
-          await apiClient('/api/ratecons/' + rc.id + '/link', { method: 'PATCH', json: { load_id: '' } })
-        } catch (linkErr) {
-          console.error('ratecon link error:', linkErr)
-        }
-      }
-    } catch (err) {
-      showToast('❌ ' + ((err && err.message) || 'Recall failed').slice(0, 60))
-    }
-  }
 
   // ── PENDING BOOKED LOADS ─────────────────────────────────
   // Booked earlier, delivering now: pick it up here to bill it. Fetch is
@@ -244,10 +186,8 @@ export default function RateCon({ load, setLoad, driver, showToast, onNext, onBo
   }
 
   // ── SHARED SCAN ENGINE ───────────────────────────────────────────────────
-  // The one OCR pipeline. Fed by BOTH the file picker (handleFile) and the
-  // queue recall (scanSavedRc) — a File is a File, wherever it came from.
-  // Returns true when the scan produced usable load data, false otherwise, so
-  // the recall knows whether to drop the con off the queue.
+  // The OCR pipeline, fed by the file picker (handleFile). Returns true when
+  // the scan produced usable load data, false otherwise.
   async function runOcrOnFiles(files) {
     if (!files || !files.length) return false
     setScanning(true)
@@ -514,53 +454,6 @@ export default function RateCon({ load, setLoad, driver, showToast, onNext, onBo
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--grey)' }}>
           Multi-page rate con? Select all photos at once — pages merge into one load.
         </div>
-
-        {/* RECALL — on-demand only. The list is hidden until tapped, fetched
-            fresh on tap, and closes after a pick. Nothing rests on this page;
-            the queue lives in its own screen (📥 QUEUE, top-right). */}
-        <button
-          className="scan-btn secondary"
-          style={{ width:'100%', marginTop: 10 }}
-          onClick={toggleRecall}
-          disabled={scanning}
-        >
-          {recallOpen ? '▲ HIDE SAVED RATE CONS' : '📥 USE A SAVED RATE CON'}
-        </button>
-
-        {recallOpen && (
-          <div style={{ marginTop: 10 }}>
-            {recallLoading ? (
-              <div style={{ fontSize:13, color:'var(--grey)', padding:'8px 2px' }}>Loading queue…</div>
-            ) : recallRows.length === 0 ? (
-              <div style={{ fontSize:13, color:'var(--grey)', padding:'8px 2px' }}>
-                No rate cons waiting in the queue. Upload one from 📥 QUEUE.
-              </div>
-            ) : (
-              recallRows.map(rc => (
-                <button
-                  key={rc.id}
-                  onClick={() => scanSavedRc(rc)}
-                  disabled={scanning}
-                  style={{ display:'flex', alignItems:'center', gap:8, width:'100%', textAlign:'left',
-                           marginBottom:8, padding:'12px 14px', borderRadius:10, cursor:'pointer',
-                           background:'var(--navy3)', border:'1px solid var(--border)', color:'var(--white)' }}
-                >
-                  <span style={{ flex:1, minWidth:0 }}>
-                    <span style={{ display:'block', fontFamily:'var(--font-head)', fontWeight:900, fontSize:14, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-                      📄 {rc.broker_name || rc.load_number || 'Rate Con'}
-                    </span>
-                    <span style={{ display:'block', fontSize:11, color:'var(--grey)', marginTop:2 }}>
-                      {(rc.uploaded_at || '').slice(0, 10)}
-                    </span>
-                  </span>
-                  <span style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:12, color:'var(--amber)', whiteSpace:'nowrap' }}>
-                    SCAN →
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
-        )}
       </div>
 
       <div className="card">
