@@ -6,15 +6,15 @@
 //   DELETE preserves the 403 ownership message via err.status. The `api` URL
 //   prop is gone; the invoice link uses apiUrl() + a ?t=<token> query.
 //
-// INVOICE PDFs:
-//   VIEW INVOICE PDF opens the STORED R2 PDF (the exact file that was saved at
-//   invoice time, with BOLs + receipts attached). For an unsaved local load
-//   (no load.id) it falls back to regenerating from load data.
-//   OPEN STORED PDF also opens the stored R2 PDF (V5, with V4 fallback).
-//   SAVE TO V5 copies a load's legacy V4 stored PDF into the V5 bucket via
-//   POST /api/invoice/:id/save (worker reads R2_V4, writes R2). Uses the
-//   logged-in session token, so the owner taps it right in the app — no file
-//   to open, no second browser.
+// INVOICE PDF (single button):
+//   VIEW INVOICE opens the stored PDF the load generated at billing time —
+//   the exact file with BOLs + lumper receipts attached. The worker serves the
+//   V5 R2 object at {tenant}/invoices/{loadId}.pdf and, for loads merged from
+//   V4 that were never copied into V5, transparently falls back to the V4
+//   stored PDF. One button covers both cases; the user never sees the plumbing.
+//   Unsaved in-memory loads (no load.id) regenerate the PDF locally.
+//   saveToV5()/saveOneToV5() remain defined (no UI caller) so the admin V4->V5
+//   copy path stays available server-side; safe to delete if never needed.
 //
 // WHITE-LABEL (DONE): this file no longer hardcodes a two-driver BRUCE/TIM
 //   model. The filter tabs, the all-time leaderboard, and per-driver card
@@ -593,8 +593,6 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
         const dateObj     = parseAppDate(loadDate(load))
         const achFee      = load.ach_payment ? Math.max(0, netPay - (parseFloat(load.ach_received)||0)) : 0
         const achPreviewFee = achReceivedAmt ? Math.max(0, netPay - (parseFloat(achReceivedAmt)||0)) : 0
-        const isSavingV5  = savingV5 === load.id
-        const isSavedV5   = !!savedV5[load.id]
         // Per-driver colors from the tenant's own list (no name matching).
         const driverColor = colorFor(load.driver)
         const headerBg    = darkenHex(driverColor)
@@ -655,18 +653,11 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
                   <span style={{ fontSize:20, fontFamily:'var(--font-head)', fontWeight:900, color:'var(--navy)' }}>{fmt(netPay)}</span>
                 </div>
               </div>
-              {/* PDF actions: VIEW = stored R2 PDF (regenerate fallback for unsaved), save V4→V5 */}
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginTop:10 }}>
-                <button onClick={() => load.id ? viewStoredInvoice(load) : generateInvoicePDF(load)} style={{ padding:'8px 0', borderRadius:8, background:'transparent', border:'1px solid var(--amber)', color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, textAlign:'center', cursor:'pointer', letterSpacing:'0.04em' }}>VIEW INVOICE PDF</button>
-                {load.id && (
-                  <button onClick={() => saveToV5(load)} disabled={isSavingV5} style={{ padding:'8px 0', borderRadius:8, background: isSavedV5 ? '#e8f5e9' : 'transparent', border: isSavedV5 ? '1px solid #2e7d32' : '1px solid var(--navy)', color: isSavedV5 ? '#2e7d32' : 'var(--navy)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, textAlign:'center', cursor: isSavingV5 ? 'default' : 'pointer', letterSpacing:'0.04em' }}>
-                    {isSavingV5 ? 'SAVING…' : (isSavedV5 ? '✓ IN V5' : 'SAVE TO V5')}
-                  </button>
-                )}
-              </div>
-              {load.id && (
-                <button onClick={() => viewStoredInvoice(load)} style={{ display:'block', width:'100%', marginTop:8, padding:'7px 0', borderRadius:8, background:'transparent', border:'1px solid var(--border)', color:'var(--grey)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:11, textAlign:'center', cursor:'pointer', letterSpacing:'0.04em' }}>OPEN STORED PDF</button>
-              )}
+              {/* One-click invoice: opens the stored PDF the load generated at
+                  billing time. Worker serves the V5 R2 PDF, and for loads merged
+                  from V4 it transparently falls back to the V4 stored PDF — same
+                  button either way. Unsaved in-memory loads regenerate locally. */}
+              <button onClick={() => load.id ? viewStoredInvoice(load) : generateInvoicePDF(load)} style={{ display:'block', width:'100%', marginTop:10, padding:'10px 0', borderRadius:8, background:'transparent', border:'1px solid var(--amber)', color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, textAlign:'center', cursor:'pointer', letterSpacing:'0.04em' }}>VIEW INVOICE</button>
               {/* Action buttons */}
               <div style={{ display:'flex', gap:8, marginTop:10, flexWrap:'wrap' }}>
                 {load.status !== 'billed' && load.status !== 'paid' && (
