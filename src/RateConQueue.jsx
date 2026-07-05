@@ -7,18 +7,20 @@
 //   billing/scan page). Each con is driver-walled by the worker (tenant +
 //   driver) in the rate_confirmations table + R2, status='pending'.
 //
-//   At billing time the scan page (RateCon.jsx) RECALLS from this same queue:
-//   the driver taps "Use a saved rate con", picks one, and the existing scanner
-//   runs it. When that happens the row links off (status='linked') and drops
-//   out of this queue automatically.
+//   OPEN scans it (2026-07-05): tapping OPEN on a queued con does NOT open a
+//   browser tab — it hands the con to the scan page (RateCon.jsx) via the
+//   onScanRc prop. App.jsx stashes the con, switches to the scan sub-view, and
+//   the SAME scanner that runs a camera photo runs this queued con. On a
+//   successful scan the row links off (status='linked') and drops out of this
+//   queue automatically. The × still deletes.
 //
 //   This screen is purely additive — it owns no settlement, tax, or load math.
-//   It only banks documents and lets you open or remove them.
+//   It only banks documents and hands them to the scanner or removes them.
 
 import { useState, useRef, useEffect } from 'react'
-import { api as apiClient, apiUrl, getToken } from './api.js'
+import { api as apiClient } from './api.js'
 
-export default function RateConQueue({ driver, showToast, onBack }) {
+export default function RateConQueue({ driver, showToast, onBack, onScanRc }) {
   const [rows, setRows]           = useState([])
   const [loading, setLoading]     = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -70,12 +72,10 @@ export default function RateConQueue({ driver, showToast, onBack }) {
     }
   }
 
-  // Open a queued con to look at it. The file GET is tenant+token walled; the
-  // worker reads the token from ?t=.
-  function openRc(id) {
-    const token = getToken()
-    const url = apiUrl('/api/ratecon-file/' + id) + (token ? ('?t=' + encodeURIComponent(token)) : '')
-    window.open(url, '_blank')
+  // OPEN → scan. Hand the queued con to the scan page; the scanner there fetches
+  // its bytes, runs OCR, and links the row off the queue on success.
+  function scanRc(rc) {
+    if (typeof onScanRc === 'function') onScanRc(rc)
   }
 
   async function deleteRc(id) {
@@ -114,7 +114,7 @@ export default function RateConQueue({ driver, showToast, onBack }) {
           {uploading ? 'UPLOADING…' : '⬆ UPLOAD / TAKE PHOTO OF RATE CON'}
         </button>
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--grey)' }}>
-          Bank a rate con the day it arrives. It waits here until you start billing that load — then the SCAN button recalls it.
+          Bank a rate con the day it arrives. It waits here until you bill that load — then tap OPEN to scan it into billing.
         </div>
       </div>
 
@@ -145,7 +145,7 @@ export default function RateConQueue({ driver, showToast, onBack }) {
               <button
                 className="scan-btn secondary"
                 style={{ width:'auto', padding:'6px 12px', margin:0 }}
-                onClick={() => openRc(rc.id)}
+                onClick={() => scanRc(rc)}
               >
                 OPEN
               </button>
