@@ -946,12 +946,13 @@ export default {
         if (!b.driver) return json({ error: 'Missing driver' }, 400);
         await env.DB.prepare(`
           INSERT INTO fuel_entries
-            (id, tenant_id, driver, entry_date, amount, fuel_type, notes, receipt_url, created_at)
-          VALUES (?,?,?,?,?,?,?,?,datetime('now'))
+            (id, tenant_id, driver, entry_date, amount, fuel_type, notes, receipt_url, odometer, created_at)
+          VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))
         `).bind(
           id, T, b.driver.toUpperCase(),
           b.entry_date || new Date().toISOString().split('T')[0],
           parseFloat(b.amount)||0, b.fuel_type||'fleet', b.notes||'', b.receipt_url||'',
+          (b.odometer === undefined || b.odometer === null || b.odometer === '') ? null : (parseFloat(b.odometer) || 0),
         ).run();
         return json({ id });
       } catch(e) { return json({ error: e.message }, 500); }
@@ -966,6 +967,7 @@ export default {
         if (b.amount     !== undefined) { fields.push('amount=?');     values.push(parseFloat(b.amount) || 0); }
         if (b.fuel_type  !== undefined) { fields.push('fuel_type=?');  values.push(b.fuel_type === 'pocket' ? 'pocket' : 'fleet'); }
         if (b.notes      !== undefined) { fields.push('notes=?');      values.push(b.notes); }
+        if (b.odometer   !== undefined) { fields.push('odometer=?');   values.push((b.odometer === null || b.odometer === '') ? null : (parseFloat(b.odometer) || 0)); }
         if (fields.length === 0) return json({ error: 'Nothing to update' }, 400);
         values.push(id, T);
         await env.DB.prepare('UPDATE fuel_entries SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
