@@ -62,12 +62,26 @@ async function requireTenant(env, request) {
   };
 }
 
-// Legacy V4 served stored invoice PDFs (with BOLs + lumper receipts attached)
-// from its own public worker at /api/invoice/{loadId}. The exact R2 object key
-// is unknown, but the V4 worker URL returns the real full PDF reliably, so we
-// fetch that directly and hand back a Response-like object with arrayBuffer().
+// Legacy V4 stored each invoice PDF (Edgerton top sheet + BOLs + receipts) in
+// the V4 R2 bucket at key `invoices/{loadId}.pdf`. That bucket is bound here
+// read-only as env.R2_V4 (load-ledger-files), and the V4 load id equals the V5
+// load id, so V5 reads the object DIRECTLY in-process — no network hop, no
+// dependency on the frozen V4 Worker staying alive. If the object is not in the
+// bound bucket (e.g. binding unavailable), we fall back to the V4 Worker URL,
+// preserving the exact behavior that already serves every migrated load.
 const V4_BASE = 'https://load-ledger-v4.d49rwgmpj9.workers.dev';
 async function getV4Invoice(env, loadId) {
+  // 1) Direct read from the bound legacy bucket (fast path, self-contained).
+  try {
+    if (env.R2_V4) {
+      const obj = await env.R2_V4.get('invoices/' + loadId + '.pdf');
+      if (obj && obj.size > 1000) {
+        const buf = await obj.arrayBuffer();
+        return { arrayBuffer: async () => buf, body: buf };
+      }
+    }
+  } catch (_) { /* fall through to URL fallback */ }
+  // 2) Fallback: fetch the V4 Worker URL (legacy path, still works).
   try {
     const res = await fetch(V4_BASE + '/api/invoice/' + loadId);
     if (!res.ok) return null;
@@ -210,6 +224,18 @@ export default {
         ).run();
         return json({ ok: true, id });
       } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // TEMP DIAGNOSTIC (key-gated, no session needed): list real object keys in
+    // the bound legacy V4 bucket so we can see the exact filenames the import
+    // wrote. Bucket list is not tenant data, so it sits before requireTenant.
+    // REMOVE immediately after reading the answer.
+    if (path === '/api/admin/v4-keys' && request.method === 'GET') {
+      if ((url.searchParams.get('key') || '') !== 'edgerton-migrate-2026') return json({ error: 'Forbidden' }, 403);
+      if (!env.R2_V4) return json({ error: 'R2_V4 not bound' }, 500);
+      const listing = await env.R2_V4.list({ limit: 1000 });
+      const keys = (listing.objects || []).map(o => ({ key: o.key, size: o.size }));
+      return json({ ok: true, count: keys.length, truncated: !!listing.truncated, keys });
     }
 
     // ── ONE-TIME ADMIN: migrate all legacy V4 invoices into V5 ───────────
