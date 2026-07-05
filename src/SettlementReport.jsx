@@ -632,6 +632,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
   const [fuelAmount,      setFuelAmount]      = useState('')
   const [fuelType,        setFuelType]        = useState('fleet')
   const [fuelNotes,       setFuelNotes]       = useState('')
+  const [fuelOdo,         setFuelOdo]         = useState('')
   const [fuelScanning,    setFuelScanning]    = useState(false)
   const [fuelSaving,      setFuelSaving]      = useState(false)
   const [fuelReceiptB64,  setFuelReceiptB64]  = useState(null)
@@ -645,6 +646,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
   const [editFuelAmount,  setEditFuelAmount]  = useState('')
   const [editFuelType,    setEditFuelType]    = useState('fleet')
   const [editFuelNotes,   setEditFuelNotes]   = useState('')
+  const [editFuelOdo,     setEditFuelOdo]     = useState('')
   const [editFuelSaving,  setEditFuelSaving]  = useState(false)
 
   // Carrier advance entry form state
@@ -895,7 +897,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
       try {
         data = await apiClient('/api/fuel', {
           method: 'POST',
-          json: { driver: fuelDriver, entry_date: fuelDate, amount: amt, fuel_type: fuelType, notes: fuelNotes },
+          json: { driver: fuelDriver, entry_date: fuelDate, amount: amt, fuel_type: fuelType, notes: fuelNotes, odometer: fuelOdo ? parseInt(fuelOdo, 10) : null },
         })
       } catch (e) { showToast('Save failed: ' + e.message); return }
       if (fuelReceiptB64 && data.id) {
@@ -907,7 +909,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
         } catch {}
       }
       showToast('Fuel entry saved!')
-      setFuelAmount(''); setFuelNotes(''); setFuelReceiptB64(null)
+      setFuelAmount(''); setFuelNotes(''); setFuelOdo(''); setFuelReceiptB64(null)
       setFuelReceiptType(null); setFuelPreview(null)
       setShowFuelDrawer(false)
       await refreshFuel()
@@ -934,6 +936,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
     setEditFuelAmount(f.amount !== undefined && f.amount !== null ? String(f.amount) : '')
     setEditFuelType(f.fuel_type === 'pocket' ? 'pocket' : 'fleet')
     setEditFuelNotes(f.notes || '')
+    setEditFuelOdo(f.odometer && Number(f.odometer) > 0 ? String(Math.round(f.odometer)) : '')
   }
 
   function cancelEditFuel() { setEditFuelId(null) }
@@ -946,7 +949,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
       try {
         await apiClient('/api/fuel/' + editFuelId, {
           method: 'PATCH',
-          json: { entry_date: editFuelDate, amount: amt, fuel_type: editFuelType, notes: editFuelNotes },
+          json: { entry_date: editFuelDate, amount: amt, fuel_type: editFuelType, notes: editFuelNotes, odometer: editFuelOdo ? parseInt(editFuelOdo, 10) : null },
         })
       } catch (e) { showToast('Update failed: ' + e.message); return }
       showToast('Fuel entry updated')
@@ -1162,7 +1165,8 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
                           </div>
                           <input type="date" value={editFuelDate} onChange={e => setEditFuelDate(e.target.value)} style={{ ...inputStyle, marginBottom:8 }} />
                           <input type="text" inputMode="decimal" placeholder="0.00" value={editFuelAmount} onChange={e => setEditFuelAmount(e.target.value)} style={{ ...inputStyle, marginBottom:8, fontSize:18, fontWeight:700, fontFamily:'var(--font-head)' }} />
-                          <input type="text" placeholder="Notes (optional)" value={editFuelNotes} onChange={e => setEditFuelNotes(e.target.value)} style={{ ...inputStyle, marginBottom:10 }} />
+                          <input type="text" placeholder="Notes (optional)" value={editFuelNotes} onChange={e => setEditFuelNotes(e.target.value)} style={{ ...inputStyle, marginBottom:8 }} />
+                          <input type="text" inputMode="numeric" placeholder="Odometer" value={editFuelOdo} onChange={e => setEditFuelOdo(e.target.value.replace(/[^0-9]/g,''))} style={{ ...inputStyle, marginBottom:10 }} />
                           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
                             <button onClick={cancelEditFuel} style={{ padding:'10px 0', borderRadius:8, border:'1px solid var(--border)', background:'transparent', color:'var(--grey)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, cursor:'pointer' }}>CANCEL</button>
                             <button onClick={saveEditFuel} disabled={editFuelSaving || !editFuelAmount} style={{ padding:'10px 0', borderRadius:8, border:'none', background:editFuelSaving||!editFuelAmount?'#555':'#4caf50', color:'#fff', fontFamily:'var(--font-head)', fontWeight:900, fontSize:12, cursor:'pointer' }}>{editFuelSaving ? 'SAVING...' : 'SAVE'}</button>
@@ -1174,6 +1178,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
                           <span style={{ fontSize:11, color:f.fuel_type==='fleet'?'var(--amber)':'#1565c0', fontFamily:'var(--font-head)', fontWeight:700 }}>{f.fuel_type==='fleet'?'FLEET':'POCKET'}</span>
                           <span style={{ fontSize:11, color:'var(--grey)', marginLeft:6 }}>{f.entry_date}</span>
                           {f.notes && <span style={{ fontSize:10, color:'var(--grey)', marginLeft:6 }}>{f.notes}</span>}
+                          {Number(f.odometer) > 0 && <span style={{ fontSize:10, color:'var(--amber)', marginLeft:6, fontFamily:'var(--font-head)', fontWeight:700 }}>{Number(f.odometer).toLocaleString()} mi</span>}
                         </div>
                         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                           <span style={{ fontFamily:'var(--font-head)', fontWeight:700, color:f.fuel_type==='fleet'?'var(--red)':'#1565c0' }}>{fmt(f.amount)}</span>
@@ -1281,6 +1286,10 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
               <div style={{ marginBottom:14 }}>
                 <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>NOTES (optional)</div>
                 <input type="text" placeholder="e.g. Fleet card week of May 21" value={fuelNotes} onChange={e => setFuelNotes(e.target.value)} style={inputStyle} />
+              </div>
+              <div style={{ marginBottom:14 }}>
+                <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>ODOMETER (optional)</div>
+                <input type="text" inputMode="numeric" placeholder="e.g. 1029463" value={fuelOdo} onChange={e => setFuelOdo(e.target.value.replace(/[^0-9]/g,''))} style={inputStyle} />
               </div>
               <button onClick={saveFuelEntry} disabled={fuelSaving||!fuelAmount} style={{ width:'100%', padding:'12px 0', borderRadius:10, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:900, fontSize:14, background:fuelSaving||!fuelAmount?'#555':'#4caf50', color:'#fff', letterSpacing:'0.06em' }}>
                 {fuelSaving ? 'SAVING...' : 'SAVE FUEL ENTRY'}
