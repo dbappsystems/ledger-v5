@@ -21,11 +21,11 @@
 //
 // RATE CON QUEUE (2026-07-05):
 //   Rate cons rest in their OWN screen (RateConQueue.jsx), reached by the 📥
-//   QUEUE button (top-right). A con is uploaded there ahead of billing and
-//   opened there to view. There is ONE doorway to the queue — the QUEUE button
-//   — so the scan page stays clean: no inline recall toggle duplicating what
-//   the QUEUE button already does. The scanner here runs live camera/photo
-//   scans via runOcrOnFiles.
+//   QUEUE button (top-right). On the queue screen, tapping OPEN hands the con
+//   here via the pendingScanRc prop; this screen then fetches its stored bytes,
+//   runs the SAME scanner that a camera photo uses (runOcrOnFiles), and links
+//   the row off the queue (status='linked') so it never bills twice. There is
+//   ONE doorway to the queue (the QUEUE button) — no inline recall toggle.
 //
 // MATH INTEGRITY: a booked row is written with net_pay=0 and all line-item
 //   totals 0 — earnings do not exist until the load is invoiced. The live
@@ -75,7 +75,7 @@ export async function uploadRateConPdf(loadId, pages) {
   return !!(res && res.ok)
 }
 
-export default function RateCon({ load, setLoad, driver, showToast, onNext, onBooked, onOpenQueue }) {
+export default function RateCon({ load, setLoad, driver, showToast, onNext, onBooked, onOpenQueue, pendingScanRc, onPendingScanDone }) {
   const [scanning, setScanning] = useState(false)
   const [scanned,  setScanned]  = useState(false)
   const [booking,  setBooking]  = useState(false)
@@ -186,8 +186,9 @@ export default function RateCon({ load, setLoad, driver, showToast, onNext, onBo
   }
 
   // ── SHARED SCAN ENGINE ───────────────────────────────────────────────────
-  // The OCR pipeline, fed by the file picker (handleFile). Returns true when
-  // the scan produced usable load data, false otherwise.
+  // The one OCR pipeline. Fed by BOTH the file picker (handleFile) and the
+  // queue OPEN handoff (the pendingScanRc effect) — a File is a File, wherever
+  // it came from. Returns true when the scan produced usable load data.
   async function runOcrOnFiles(files) {
     if (!files || !files.length) return false
     setScanning(true)
@@ -267,6 +268,44 @@ export default function RateCon({ load, setLoad, driver, showToast, onNext, onBo
     if (fileRef.current) fileRef.current.value = ''
     await runOcrOnFiles(files)
   }
+
+  // ── QUEUE OPEN HANDOFF ───────────────────────────────────────────────────
+  // The queue's OPEN button hands a con here via pendingScanRc. Fetch its stored
+  // bytes (tenant+token walled), wrap in a File, run the SAME scanner. On a
+  // successful scan, link the row off the queue so it can never bill twice.
+  // onPendingScanDone clears the parent's stash so this fires exactly once.
+  useEffect(() => {
+    if (!pendingScanRc) return
+    let alive = true
+    ;(async () => {
+      const rc = pendingScanRc
+      try {
+        const token = getToken()
+        const url = apiUrl('/api/ratecon-file/' + rc.id) + (token ? ('?t=' + encodeURIComponent(token)) : '')
+        const resp = await fetch(url)
+        if (!resp.ok) throw new Error('Could not load saved rate con')
+        const blob = await resp.blob()
+        const type = blob.type || rc.content_type || 'application/pdf'
+        const ext  = type.indexOf('pdf') !== -1 ? 'pdf' : 'jpg'
+        const file = new File([blob], 'ratecon-' + rc.id + '.' + ext, { type })
+
+        const ok = await runOcrOnFiles([file])
+        if (ok && alive) {
+          try {
+            await apiClient('/api/ratecons/' + rc.id + '/link', { method: 'PATCH', json: { load_id: '' } })
+          } catch (linkErr) {
+            console.error('ratecon link error:', linkErr)
+          }
+        }
+      } catch (err) {
+        showToast('❌ ' + ((err && err.message) || 'Scan failed').slice(0, 60))
+      } finally {
+        if (alive && typeof onPendingScanDone === 'function') onPendingScanDone()
+      }
+    })()
+    return () => { alive = false }
+    // eslint-disable-next-line
+  }, [pendingScanRc])
 
   function toBase64(file) {
     return new Promise((resolve, reject) => {
