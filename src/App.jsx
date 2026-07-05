@@ -21,11 +21,12 @@
 // the logged-in app (never on the login screen). It posts comments to the DB
 // (POST /api/contact) — it does NOT send email. It floats above the tab bar.
 //
-// RATE CON QUEUE (2026-07-04): rate cons rest in their own screen
+// RATE CON QUEUE (2026-07-05): rate cons rest in their own screen
 // (RateConQueue.jsx), mounted as loadsSubView 'ratecon-queue' (driver only).
-// The scan page (RateCon.jsx) opens empty and reaches the queue via its 📥
-// QUEUE button (onOpenQueue); the queue's ← BACK returns to the scan page.
-// Recall of a saved con happens inline on the scan page, not here.
+// The scan page reaches it via its 📥 QUEUE button (onOpenQueue); the queue's
+// ← BACK returns to the scan page. On the queue, tapping OPEN stashes the con
+// in pendingScanRc and switches to the scan page, which auto-scans it via the
+// SAME scanner and links it off the queue. onPendingScanDone clears the stash.
 
 import { useState, useEffect } from 'react'
 import RateCon          from './RateCon.jsx'
@@ -71,6 +72,10 @@ export default function App() {
   const [loads,           setLoads]           = useState([])
   const [toast,           setToast]           = useState(null)
   const [tenantSettings,  setTenantSettings]  = useState(null)
+
+  // RATE CON QUEUE: a con handed from the queue's OPEN button, waiting for the
+  // scan page to pick it up and run the scanner on it. Cleared once scanned.
+  const [pendingScanRc,   setPendingScanRc]   = useState(null)
 
   // WHITE-LABEL: the tenant's own drivers (names + colors), replacing the old
   // hardcoded ['BRUCE','TIM']. Falls back to the seeded identities if the
@@ -256,6 +261,15 @@ export default function App() {
     setLoadsSubView('list')
   }
 
+  // RATE CON QUEUE: OPEN on the queue hands a con here. Start from a clean load
+  // (a queued con is a NEW load, never a booked pickup), stash the con, and
+  // switch to the scan page — its pendingScanRc effect runs the scanner.
+  function scanQueuedRc(rc) {
+    setLoad(newLoad())
+    setPendingScanRc(rc)
+    setLoadsSubView('ratecon')
+  }
+
   function logout() {
     apiLogout()              // clears the v5 session token + tells the worker
     setDriver(null)
@@ -268,6 +282,7 @@ export default function App() {
     setLoads([])
     setCredAlerts([])
     setMaintenanceEntries([])
+    setPendingScanRc(null)
     setTab('loads')
     setLoadsSubView('list')
   }
@@ -468,13 +483,13 @@ export default function App() {
 
             {loadsSubView === 'ratecon' && !isBookkeeper && (
               <div style={{ flex:1, overflowY:'auto' }}>
-                <RateCon load={load} setLoad={setLoad} driver={driver} showToast={showToast} onNext={() => setLoadsSubView('invoice')} onBooked={() => { fetchLoads(); afterInvoiceSave() }} onOpenQueue={() => setLoadsSubView('ratecon-queue')} />
+                <RateCon load={load} setLoad={setLoad} driver={driver} showToast={showToast} onNext={() => setLoadsSubView('invoice')} onBooked={() => { fetchLoads(); afterInvoiceSave() }} onOpenQueue={() => setLoadsSubView('ratecon-queue')} pendingScanRc={pendingScanRc} onPendingScanDone={() => setPendingScanRc(null)} />
               </div>
             )}
 
             {loadsSubView === 'ratecon-queue' && !isBookkeeper && (
               <div style={{ flex:1, overflowY:'auto' }}>
-                <RateConQueue driver={driver} showToast={showToast} onBack={() => setLoadsSubView('ratecon')} />
+                <RateConQueue driver={driver} showToast={showToast} onBack={() => setLoadsSubView('ratecon')} onScanRc={scanQueuedRc} />
               </div>
             )}
 
