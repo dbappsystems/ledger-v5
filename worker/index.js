@@ -922,6 +922,8 @@ export default {
         }
         if (env.R2) await env.R2.delete(T + '/invoices/' + id + '.pdf').catch(() => {});
         if (env.R2) await env.R2.delete(T + '/ratecons/' + id + '.pdf').catch(() => {});
+        await env.DB.prepare('DELETE FROM ifta_miles WHERE tenant_id=? AND load_id=?').bind(T, id).run();
+        await env.DB.prepare('DELETE FROM load_stops WHERE tenant_id=? AND load_id=?').bind(T, id).run();
         await env.DB.prepare('DELETE FROM loads WHERE id=? AND tenant_id=?').bind(id, T).run();
         return json({ ok: true });
       } catch(e) { return json({ error: e.message }, 500); }
