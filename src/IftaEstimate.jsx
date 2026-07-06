@@ -38,6 +38,7 @@ export default function IftaEstimate({ driver }) {
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState('')
   const [open,    setOpen]    = useState(false)
+  const [ivdrOpen, setIvdrOpen] = useState(false)
   const now = new Date()
   const [qtr,  setQtr]  = useState(Math.floor(now.getMonth() / 3) + 1) // 1..4, 0 = ALL
   const [year, setYear] = useState(now.getFullYear())
@@ -64,6 +65,7 @@ export default function IftaEstimate({ driver }) {
   useEffect(() => {
     setData(null)
     setOpen(false)
+    setIvdrOpen(false)
     fetchIfta()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [driver, qtr, year])
@@ -80,6 +82,12 @@ export default function IftaEstimate({ driver }) {
   const fleetMpg = (data && data.fleet_mpg) || 0
   const hasGal   = totalGal > 0 && fleetMpg > 0
 
+  // IVDR state-line odometer segments (from ifta_segments) + purchased
+  // gallons by state (parsed from fuel-report merchant notes). Both arrive
+  // on the same summary payload — no extra request.
+  const segments = (data && Array.isArray(data.segments)) ? data.segments : []
+  const purch    = (data && data.purchased_gallons_by_state) || null
+
   // One decimal, thousands-separated — matches the ledger's r1() precision.
   function mi(n) {
     return (Math.round((n || 0) * 10) / 10)
@@ -89,6 +97,64 @@ export default function IftaEstimate({ driver }) {
   function gal(n) {
     return (Math.round((n || 0) * 10) / 10)
       .toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+  }
+
+  // IVDR CSV — quarterly Individual Vehicle Distance Record for the filing
+  // agent. Spreadsheet format is the audit requirement (XLS/XLSX/CSV; static
+  // PDFs are not acceptable for computed distance records). Built entirely
+  // client-side from the summary payload; one file per driver per window.
+  function downloadIvdrCsv() {
+    const esc = (v) => {
+      const s = String(v == null ? '' : v)
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
+    }
+    const windowLabel = qtr >= 1 ? 'Q' + qtr + ' ' + year : 'ALL RECORDED'
+    const lines = []
+    lines.push(['INDIVIDUAL VEHICLE DISTANCE RECORD (IVDR) - ESTIMATED'].join(','))
+    lines.push(['Driver', driver].map(esc).join(','))
+    lines.push(['Period', windowLabel].map(esc).join(','))
+    lines.push(['Method', 'Routed truck-profile highway miles; odometer chain derived from routed miles (anchor estimated); state-line dates interpolated between pickup and delivery. All figures are estimates for filing preparation.'].map(esc).join(','))
+    lines.push('')
+    lines.push(['Date','Load','Leg','State','Odometer Start','Odometer End','Miles','Notes'].join(','))
+    for (const s of segments) {
+      lines.push([
+        s.date, (s.load_id || '').slice(0, 8), s.leg_type, s.state,
+        (s.odo_start || 0).toFixed(1), (s.odo_end || 0).toFixed(1),
+        (s.miles || 0).toFixed(1), s.notes || '',
+      ].map(esc).join(','))
+    }
+    lines.push('')
+    lines.push(['SUMMARY - MILES + GALLONS BY STATE'].join(','))
+    lines.push(['State','Total Miles','Loaded','Deadhead','Est Gallons Consumed','Gallons Purchased'].join(','))
+    for (const r of states) {
+      lines.push([
+        r.state, (r.miles || 0).toFixed(1), (r.loaded || 0).toFixed(1),
+        (r.deadhead || 0).toFixed(1),
+        r.est_gallons == null ? '' : r.est_gallons.toFixed(3),
+        purch && purch[r.state] != null ? purch[r.state].toFixed(3) : '',
+      ].map(esc).join(','))
+    }
+    if (purch) {
+      for (const st of Object.keys(purch)) {
+        if (!states.some(r => r.state === st)) {
+          lines.push([st, '0.0', '0.0', '0.0', '', purch[st].toFixed(3)].map(esc).join(','))
+        }
+      }
+    }
+    lines.push('')
+    lines.push(['TOTAL MILES', (grand || 0).toFixed(1)].join(','))
+    lines.push(['GALLONS PURCHASED (truck fuel, reefer excluded)', (totalGal || 0).toFixed(3)].join(','))
+    if (fleetMpg > 0) lines.push(['FLEET MPG (estimated)', fleetMpg.toFixed(2)].join(','))
+    const fname = 'IVDR_' + driver + '_' + (qtr >= 1 ? 'Q' + qtr + '_' + year : 'ALL') + '.csv'
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const aEl = document.createElement('a')
+    aEl.href = url
+    aEl.download = fname
+    document.body.appendChild(aEl)
+    aEl.click()
+    document.body.removeChild(aEl)
+    setTimeout(() => URL.revokeObjectURL(url), 4000)
   }
 
   // Per-state grid widens by one column when gallons are present.
@@ -228,6 +294,52 @@ export default function IftaEstimate({ driver }) {
             <div style={{ fontSize:10, color:'var(--grey)', marginTop:4 }}>
               XX = unattributed boundary sliver, kept so state miles always sum
               to the routed total.
+            </div>
+          )}
+
+          {/* IVDR — state-line odometer records (date + reading each line) */}
+          {segments.length > 0 && (
+            <div style={{ marginTop:12 }}>
+              <button
+                className="scan-btn secondary"
+                style={{ width:'100%', padding:'10px', fontSize:12 }}
+                onClick={(ev) => { ev.stopPropagation(); setIvdrOpen(v => !v) }}
+              >
+                {(ivdrOpen ? '\u25b2 ' : '\u25bc ') + 'IVDR \u2014 STATE LINE ODOMETER (' + segments.length + ')'}
+              </button>
+              {ivdrOpen && (
+                <div style={{ marginTop:10 }}>
+                  <div style={{ display:'grid', gridTemplateColumns:'62px 34px 1fr 1fr 58px', fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', padding:'0 2px 6px', borderBottom:'1px solid var(--border)' }}>
+                    <div>DATE</div>
+                    <div>ST</div>
+                    <div style={{ textAlign:'right' }}>ODO START</div>
+                    <div style={{ textAlign:'right' }}>ODO END</div>
+                    <div style={{ textAlign:'right' }}>MILES</div>
+                  </div>
+                  {segments.map((s, idx) => (
+                    <div key={idx} style={{ display:'grid', gridTemplateColumns:'62px 34px 1fr 1fr 58px', padding:'6px 2px', borderBottom:'1px solid rgba(255,255,255,0.05)', fontSize:11, opacity: s.leg_type === 'deadhead' ? 0.75 : 1 }}>
+                      <div style={{ color:'var(--grey)' }}>{(s.date || '').slice(0, 5)}</div>
+                      <div style={{ fontFamily:'var(--font-head)', fontWeight:900, color: s.leg_type === 'deadhead' ? 'var(--grey)' : 'var(--white)' }}>{s.state}</div>
+                      <div style={{ textAlign:'right', color:'var(--grey)' }}>{Math.round(s.odo_start).toLocaleString('en-US')}</div>
+                      <div style={{ textAlign:'right', color:'var(--white)' }}>{Math.round(s.odo_end).toLocaleString('en-US')}</div>
+                      <div style={{ textAlign:'right', color:'var(--amber)', fontWeight:700 }}>{mi(s.miles)}</div>
+                    </div>
+                  ))}
+                  <div style={{ fontSize:10, color:'var(--grey)', marginTop:8 }}>
+                    One row per state traversal in travel order: the reading that
+                    ends one state{'\u2019'}s miles opens the next. Deadhead rows dimmed.
+                    Odometer chain derived from routed miles (anchor estimated);
+                    dates interpolated between pickup and delivery.
+                  </div>
+                </div>
+              )}
+              <button
+                className="scan-btn"
+                style={{ width:'100%', marginTop:8, padding:'10px', fontSize:12 }}
+                onClick={(ev) => { ev.stopPropagation(); downloadIvdrCsv() }}
+              >
+                DOWNLOAD IVDR CSV
+              </button>
             </div>
           )}
 
