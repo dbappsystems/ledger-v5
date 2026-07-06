@@ -27,6 +27,14 @@
 // ← BACK returns to the scan page. On the queue, tapping OPEN stashes the con
 // in pendingScanRc and switches to the scan page, which auto-scans it via the
 // SAME scanner and links it off the queue. onPendingScanDone clears the stash.
+//
+// OWNER VISIBILITY (2026-07-05): role 'owner' (the carrier) now gets the same
+// VIEWING driver selector the bookkeeper uses — on Repairs and Assets AND on
+// the Profile tab — so the owner can open any driver's Settlement Reports,
+// IFTA card, Tax Desk, credentials, repairs, and assets. The driver-keyed
+// desks read activeDriver, which falls back to self until the tenant driver
+// list loads, so nothing ever renders with a null driver. A plain 'driver'
+// role is untouched: activeDriver === driver for them, exactly as before.
 
 import { useState, useEffect } from 'react'
 import RateCon          from './RateCon.jsx'
@@ -138,7 +146,15 @@ export default function App() {
     } catch {}
   }, [])
 
-  const activeDriver = role === 'bookkeeper' ? viewDriver : driver
+  const isBookkeeper = role === 'bookkeeper'
+  // OWNER VISIBILITY: the carrier owner can repoint the driver-keyed desks
+  // (Settlement, IFTA, Tax, Repairs, Assets, DriverProfile) at any tenant
+  // driver via the same VIEWING selector the bookkeeper already uses.
+  // activeDriver falls back to self until the driver list loads, so the
+  // desks never render with a null driver.
+  const isOwner    = role === 'owner'
+  const canViewAll = isBookkeeper || isOwner
+  const activeDriver = canViewAll ? (viewDriver || driver) : driver
 
   // BOOK NOW, BILL LATER: a booked load is a contract, not earnings. Every
   // settlement, tax, and bookkeeper input gets this filtered list so booked
@@ -428,9 +444,15 @@ export default function App() {
   }
 
   // -- MAIN APP ---------------------------------------------
-  const isBookkeeper = role === 'bookkeeper'
   // LOADS breadcrumb shows only for drivers actively inside the new-load flow.
   const showLoadsCrumb = !isBookkeeper && tab === 'loads' && (loadsSubView === 'ratecon' || loadsSubView === 'invoice' || loadsSubView === 'ratecon-queue')
+
+  // OWNER VISIBILITY: where the VIEWING driver selector renders. Bookkeeper
+  // behavior is unchanged (Repairs + Assets). The owner additionally gets it
+  // on Profile, so the driver-keyed desks there can be repointed.
+  const showViewingBar =
+    (isBookkeeper && (tab === 'maintenance' || tab === 'assets')) ||
+    (isOwner && (tab === 'maintenance' || tab === 'assets' || tab === 'profile'))
 
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100dvh' }}>
@@ -450,12 +472,12 @@ export default function App() {
 
       {/* DRIVER BAR */}
       <div className="driver-bar" style={{ justifyContent:'space-between', alignItems:'center', gap:8 }}>
-        {isBookkeeper && (tab === 'maintenance' || tab === 'assets') ? (
+        {showViewingBar ? (
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
             <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em' }}>VIEWING:</div>
             {/* WHITE-LABEL: tenant's own drivers via useDrivers() (was hardcoded BRUCE/TIM). */}
             {driverNames.map(d => (
-              <button key={d} onClick={() => setViewDriver(d)} style={{ padding:'7px 16px', borderRadius:8, border:'none', background: viewDriver === d ? 'var(--amber)' : 'var(--navy3)', color: viewDriver === d ? '#0A1628' : 'var(--grey)', fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>{d}</button>
+              <button key={d} onClick={() => setViewDriver(d)} style={{ padding:'7px 16px', borderRadius:8, border:'none', background: activeDriver === d ? 'var(--amber)' : 'var(--navy3)', color: activeDriver === d ? '#0A1628' : 'var(--grey)', fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>{d}</button>
             ))}
           </div>
         ) : (
@@ -508,17 +530,17 @@ export default function App() {
           </div>
         )}
 
-        {/* -- PROFILE TAB - DRIVER ---------------------- */}
+        {/* -- PROFILE TAB - DRIVER / OWNER --------------- */}
         {tab === 'profile' && !isBookkeeper && (
           <div>
             <div className="section-title" style={{ paddingLeft:4 }}>SETTLEMENT REPORTS</div>
-            <SettlementReport driverName={driver} loads={billableLoads} showToast={showToast} ownerCutPct={ownerCutPct} />
+            <SettlementReport driverName={activeDriver} loads={billableLoads} showToast={showToast} ownerCutPct={ownerCutPct} />
             <div style={{ height:32 }} />
-            <IftaEstimate driver={driver} />
+            <IftaEstimate driver={activeDriver} />
             <div style={{ height:32 }} />
-            <Tax loads={billableLoads} driver={driver} />
+            <Tax loads={billableLoads} driver={activeDriver} />
             <div style={{ height:32 }} />
-            <DriverProfile driver={driver} showToast={showToast} />
+            <DriverProfile driver={activeDriver} showToast={showToast} />
             <div style={{ height:24 }} />
           </div>
         )}
