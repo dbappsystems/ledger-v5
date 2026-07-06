@@ -251,9 +251,10 @@ export async function handleIftaSummary(env, T, driver, url) {
   // format migration required. from/to behavior preserved unchanged.
   const q = parseInt(url.searchParams.get('q') || '0', 10);
   const year = (url.searchParams.get('year') || '').replace(/[^0-9]/g, '');
+  const isQuarter = q >= 1 && q <= 4 && year.length === 4;
   let where = 'tenant_id=? AND driver=?';
   const binds = [T, driver.toUpperCase()];
-  if (q >= 1 && q <= 4 && year.length === 4) {
+  if (isQuarter) {
     const mStart = String((q - 1) * 3 + 1).padStart(2, '0');
     const mEnd = String(q * 3).padStart(2, '0');
     where += ' AND substr(entry_date,7,4)=? AND substr(entry_date,1,2)>=? AND substr(entry_date,1,2)<=?';
@@ -275,19 +276,74 @@ export async function handleIftaSummary(env, T, driver, url) {
   ).bind(...binds).all();
 
   const grand = results.reduce((s, r) => s + (r.total_miles || 0), 0);
+
+  // ── FUEL SIDE: estimated gallons per state (IFTA fuel computation) ──────
+  // Total gallons PURCHASED in the same window sets the fleet's estimated fuel
+  // economy; per-state gallons are that state's miles carved out of the total
+  // by the mile share. Fleet-card fuel (fuel_entries.gallons) is the only
+  // source carrying a gallon count — the out-of-pocket maintenance_ledger fuel
+  // rows record dollars, not gallons, so they cannot enter a gallon total
+  // without inventing a price. This is the ESTIMATE Tim's in-cab odometer hand
+  // ledger reconciles (odometer at fueling + at each state line) before filing.
+  //
+  // DATE FORMATS DIFFER BY TABLE — verify before editing this block:
+  //   ifta_miles.entry_date   = MM/DD/YYYY  (parsed above: substr 7,4 / 1,2)
+  //   fuel_entries.entry_date = YYYY-MM-DD  (parsed here:  substr 1,4 / 6,2)
+  // Gallons compute on the quarter (q+year) window and on ALL (no window).
+  // A raw from/to window is left gallon-blank rather than risk a cross-format
+  // date mismatch that would silently drop or double fuel rows.
+  let totalGallons = null;
+  if (isQuarter) {
+    const mStart = String((q - 1) * 3 + 1).padStart(2, '0');
+    const mEnd = String(q * 3).padStart(2, '0');
+    const row = await env.DB.prepare(
+      `SELECT SUM(gallons) AS g FROM fuel_entries
+        WHERE tenant_id=? AND UPPER(driver)=? AND fuel_type='fleet'
+          AND substr(entry_date,1,4)=? AND substr(entry_date,6,2)>=? AND substr(entry_date,6,2)<=?`
+    ).bind(T, driver.toUpperCase(), year, mStart, mEnd).first();
+    totalGallons = row && row.g ? row.g : 0;
+  } else if (!from && !to) {
+    const row = await env.DB.prepare(
+      `SELECT SUM(gallons) AS g FROM fuel_entries
+        WHERE tenant_id=? AND UPPER(driver)=? AND fuel_type='fleet'`
+    ).bind(T, driver.toUpperCase()).first();
+    totalGallons = row && row.g ? row.g : 0;
+  }
+
+  const g2 = (n) => Math.round(n * 1000) / 1000;
+  // Fleet MPG (estimated): estimated routed miles ÷ fleet-card gallons bought.
+  const fleetMpg =
+    totalGallons && totalGallons > 0 && grand > 0
+      ? g2(grand / totalGallons)
+      : null;
+  // Per-state estimated gallons carve total gallons by the state's mile share
+  // (state_miles × total_gallons ÷ total_miles). This makes the per-state
+  // gallons SUM to gallons purchased — Accountability Without Exception, the
+  // fuel-side twin of the mile integrity rule. Using the raw ratio (not the
+  // rounded MPG) keeps that identity exact to the rounding.
+  const estGal = (miles) =>
+    totalGallons && totalGallons > 0 && grand > 0
+      ? g2((miles * totalGallons) / grand)
+      : null;
+
   return {
     status: 200,
     body: {
       driver: driver.toUpperCase(),
       estimated: true,
       from, to,
-      quarter: (q >= 1 && q <= 4 && year.length === 4) ? { q, year } : null,
+      quarter: isQuarter ? { q, year } : null,
       grand_total_miles: r1(grand),
+      // Fuel side (all ESTIMATED; fleet-card gallons only).
+      total_gallons: totalGallons === null ? null : g2(totalGallons),
+      fleet_mpg: fleetMpg,
+      gallons_estimated: true,
       states: results.map((r) => ({
         state: r.state,
         miles: r1(r.total_miles || 0),
         loaded: r1(r.loaded_miles || 0),
         deadhead: r1(r.deadhead_miles || 0),
+        est_gallons: estGal(r.total_miles || 0),
         source: r.best_source,
       })),
     },
