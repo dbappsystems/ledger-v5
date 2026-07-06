@@ -285,6 +285,9 @@ export async function handleIftaSummary(env, T, driver, url) {
   // rows record dollars, not gallons, so they cannot enter a gallon total
   // without inventing a price. This is the ESTIMATE Tim's in-cab odometer hand
   // ledger reconciles (odometer at fueling + at each state line) before filing.
+  // REEFER RULE: rows noted 'Refer fuel' are refrigeration diesel — they do
+  // not propel the truck, so they are EXCLUDED from IFTA MPG and tax-paid
+  // gallons everywhere below (both the total and the purchased-by-state map).
   //
   // DATE FORMATS DIFFER BY TABLE — verify before editing this block:
   //   ifta_miles.entry_date   = MM/DD/YYYY  (parsed above: substr 7,4 / 1,2)
@@ -299,13 +302,15 @@ export async function handleIftaSummary(env, T, driver, url) {
     const row = await env.DB.prepare(
       `SELECT SUM(gallons) AS g FROM fuel_entries
         WHERE tenant_id=? AND UPPER(driver)=? AND fuel_type='fleet'
+          AND notes NOT LIKE 'Refer fuel%'
           AND substr(entry_date,1,4)=? AND substr(entry_date,6,2)>=? AND substr(entry_date,6,2)<=?`
     ).bind(T, driver.toUpperCase(), year, mStart, mEnd).first();
     totalGallons = row && row.g ? row.g : 0;
   } else if (!from && !to) {
     const row = await env.DB.prepare(
       `SELECT SUM(gallons) AS g FROM fuel_entries
-        WHERE tenant_id=? AND UPPER(driver)=? AND fuel_type='fleet'`
+        WHERE tenant_id=? AND UPPER(driver)=? AND fuel_type='fleet'
+          AND notes NOT LIKE 'Refer fuel%'`
     ).bind(T, driver.toUpperCase()).first();
     totalGallons = row && row.g ? row.g : 0;
   }
@@ -326,6 +331,64 @@ export async function handleIftaSummary(env, T, driver, url) {
       ? g2((miles * totalGallons) / grand)
       : null;
 
+  // ── PURCHASED gallons by state (fact side) ──────────────────────────────
+  // Fuel notes carry the merchant tail: '... , City ST - fuel report inv N'.
+  // The 2-letter state before ' - fuel report' is the purchase jurisdiction.
+  // Rows whose notes do not match report under 'UNKNOWN' rather than being
+  // silently dropped (Truth as Architecture). Truck fuel only — reefer rows
+  // are excluded by the same rule as the totals above.
+  let purchasedByState = null;
+  if (isQuarter || (!from && !to)) {
+    let fWhere = "tenant_id=? AND UPPER(driver)=? AND fuel_type='fleet' AND notes NOT LIKE 'Refer fuel%'";
+    const fBinds = [T, driver.toUpperCase()];
+    if (isQuarter) {
+      const mS = String((q - 1) * 3 + 1).padStart(2, '0');
+      const mE = String(q * 3).padStart(2, '0');
+      fWhere += ' AND substr(entry_date,1,4)=? AND substr(entry_date,6,2)>=? AND substr(entry_date,6,2)<=?';
+      fBinds.push(year, mS, mE);
+    }
+    const { results: fuelRows } = await env.DB.prepare(
+      `SELECT gallons, notes FROM fuel_entries WHERE ${fWhere}`
+    ).bind(...fBinds).all();
+    purchasedByState = {};
+    for (const fr of fuelRows) {
+      const head = String(fr.notes || '').split(' - fuel report')[0];
+      const m = head.match(/\b([A-Z]{2})\s*$/);
+      const st = m ? m[1] : 'UNKNOWN';
+      purchasedByState[st] = g2((purchasedByState[st] || 0) + (fr.gallons || 0));
+    }
+  }
+
+  // ── IVDR odometer segments (state-line records) ─────────────────────────
+  // One row per state traversal in travel order: date, state, odometer start,
+  // odometer end, miles. Selected by LOAD membership in the mile window (not
+  // by segment date) so the quarterly IVDR total always equals the quarterly
+  // ifta_miles total the card files on — trips straddling quarter-end keep
+  // their true crossing dates but stay whole. Chain rule: every odo_start
+  // equals the previous segment's odo_end; miles = odo_end - odo_start.
+  let segments = [];
+  try {
+    const { results: segRows } = await env.DB.prepare(
+      `SELECT s.load_id, s.seq, s.entry_date, s.state, s.miles,
+              s.odo_start, s.odo_end, s.leg_type, s.notes
+         FROM ifta_segments s
+        WHERE s.tenant_id=? AND s.driver=?
+          AND s.load_id IN (SELECT DISTINCT load_id FROM ifta_miles WHERE ${where})
+        ORDER BY s.odo_start ASC`
+    ).bind(T, driver.toUpperCase(), ...binds).all();
+    segments = segRows.map((s) => ({
+      load_id: s.load_id,
+      seq: s.seq,
+      date: s.entry_date,
+      state: s.state,
+      miles: r1(s.miles || 0),
+      odo_start: r1(s.odo_start || 0),
+      odo_end: r1(s.odo_end || 0),
+      leg_type: s.leg_type,
+      notes: s.notes || '',
+    }));
+  } catch (_) { segments = []; }
+
   return {
     status: 200,
     body: {
@@ -338,6 +401,8 @@ export async function handleIftaSummary(env, T, driver, url) {
       total_gallons: totalGallons === null ? null : g2(totalGallons),
       fleet_mpg: fleetMpg,
       gallons_estimated: true,
+      purchased_gallons_by_state: purchasedByState,
+      segments,
       states: results.map((r) => ({
         state: r.state,
         miles: r1(r.total_miles || 0),
