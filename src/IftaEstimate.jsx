@@ -12,11 +12,11 @@
 // otherwise (rows source='estimated'). Every figure on this card is an
 // ESTIMATE for IFTA filing preparation.
 //
-// Date filtering note (deliberate v1 scope): /api/ifta supports ?from=&to=
-// against entry_date, but entry_date currently stores the RC scanner's
-// MM/DD/YYYY delivery_date, so lexicographic date windows are unreliable.
-// This card shows the ALL-TIME ledger until entry_date is normalized to
-// ISO YYYY-MM-DD in worker/ifta.js — then the quarter filter can land here.
+// IFTA is filed QUARTERLY (Q1 due Apr 30, Q2 due Jul 31, Q3 due Oct 31,
+// Q4 due Jan 31). This card defaults to the current quarter and offers
+// Q1-Q4 pills + a year stepper, plus ALL for the running ledger view.
+// The Worker filters year-safely via ?q=&year= (substr match on the stored
+// MM/DD/YYYY entry_date) — no cross-year lexicographic leakage.
 
 import { useState, useEffect } from 'react'
 import { api as apiClient } from './api.js'
@@ -30,13 +30,17 @@ export default function IftaEstimate({ driver }) {
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState('')
   const [open,    setOpen]    = useState(false)
+  const now = new Date()
+  const [qtr,  setQtr]  = useState(Math.floor(now.getMonth() / 3) + 1) // 1..4, 0 = ALL
+  const [year, setYear] = useState(now.getFullYear())
 
   async function fetchIfta() {
     if (!driver) return
     setLoading(true)
     setError('')
     try {
-      const json = await apiClient('/api/ifta/' + encodeURIComponent(driver))
+      const qs = qtr >= 1 ? ('?q=' + qtr + '&year=' + year) : ''
+      const json = await apiClient('/api/ifta/' + encodeURIComponent(driver) + qs)
       setData(json && Array.isArray(json.states)
         ? json
         : { states: [], grand_total_miles: 0 })
@@ -54,7 +58,7 @@ export default function IftaEstimate({ driver }) {
     setOpen(false)
     fetchIfta()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [driver])
+  }, [driver, qtr, year])
 
   const states   = (data && data.states) || []
   const grand    = (data && data.grand_total_miles) || 0
@@ -85,7 +89,9 @@ export default function IftaEstimate({ driver }) {
             </span>
           </div>
           <div style={{ fontSize:11, color:'var(--grey)', marginTop:3 }}>
-            Routed truck highway miles - loaded + deadhead - all time
+            {qtr >= 1
+              ? 'Q' + qtr + ' ' + year + ' \u00b7 ' + ['Jan 1 - Mar 31','Apr 1 - Jun 30','Jul 1 - Sep 30','Oct 1 - Dec 31'][qtr - 1] + ' \u00b7 loaded + deadhead'
+              : 'Routed truck highway miles - loaded + deadhead - all time'}
           </div>
         </div>
         <div style={{ textAlign:'right' }}>
@@ -97,14 +103,38 @@ export default function IftaEstimate({ driver }) {
         </div>
       </div>
 
+      {/* Quarter selector — IFTA filings are quarterly */}
+      <div style={{ display:'flex', alignItems:'center', gap:6, marginTop:12 }} onClick={e => e.stopPropagation()}>
+        {[1,2,3,4].map(n => (
+          <button key={n} onClick={() => setQtr(n)}
+            style={{ flex:1, padding:'7px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:900, fontSize:11, letterSpacing:'0.05em',
+              background: qtr === n ? 'var(--amber)' : 'var(--navy3)',
+              color: qtr === n ? '#0A1628' : 'var(--grey)' }}>
+            {'Q' + n}
+          </button>
+        ))}
+        <button onClick={() => setQtr(0)}
+          style={{ flex:1, padding:'7px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:900, fontSize:11, letterSpacing:'0.05em',
+            background: qtr === 0 ? 'var(--amber)' : 'var(--navy3)',
+            color: qtr === 0 ? '#0A1628' : 'var(--grey)' }}>
+          ALL
+        </button>
+        <div style={{ display:'flex', alignItems:'center', gap:4, marginLeft:2, opacity: qtr >= 1 ? 1 : 0.35 }}>
+          <button onClick={() => qtr >= 1 && setYear(y => y - 1)} style={{ background:'transparent', border:'none', color:'var(--grey)', cursor:'pointer', fontSize:14, padding:'0 2px' }}>{'\u2039'}</button>
+          <span style={{ fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, color:'var(--white)' }}>{year}</span>
+          <button onClick={() => qtr >= 1 && setYear(y => y + 1)} style={{ background:'transparent', border:'none', color:'var(--grey)', cursor:'pointer', fontSize:14, padding:'0 2px' }}>{'\u203a'}</button>
+        </div>
+      </div>
+
       {error && (
         <div style={{ fontSize:11, color:'#e53935', marginTop:10 }}>⚠️ {error}</div>
       )}
 
       {!loading && !error && states.length === 0 && (
         <div style={{ fontSize:11, color:'var(--grey)', marginTop:10 }}>
-          No routed miles yet. State miles build automatically each time a load
-          is invoiced with its stops scanned from the rate con.
+          {qtr >= 1 ? 'No miles recorded in Q' + qtr + ' ' + year + '.' : 'No routed miles yet.'} State
+          miles build automatically each time a load is invoiced with its stops
+          scanned from the rate con.
         </div>
       )}
 
