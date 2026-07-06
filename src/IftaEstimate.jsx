@@ -1,6 +1,6 @@
 // src/IftaEstimate.jsx
 // (c) dbappsystems.com | daddyboyapps.com
-// Load Ledger V5 — Estimated IFTA Miles by State
+// Load Ledger V5 — Estimated IFTA Miles + Gallons by State
 //
 // Data source: GET /api/ifta/{driver} — the ongoing ifta_miles ledger the
 // Worker writes when a load is invoiced. Invoice.jsx STEP 1b saves the rate
@@ -11,6 +11,14 @@
 // ORS_API_KEY Worker secret is set (rows source='routed'), OSRM fallback
 // otherwise (rows source='estimated'). Every figure on this card is an
 // ESTIMATE for IFTA filing preparation.
+//
+// GALLONS (fuel side): the Worker sums fleet-card gallons purchased in the
+// same quarter (fuel_entries.gallons), derives an estimated Fleet MPG
+// (miles / gallons), and carves gallons across states by each state's mile
+// share so per-state gallons SUM to gallons purchased. Out-of-pocket fuel
+// records dollars but no gallons, so it is not in this figure. Reconcile
+// against Tim's in-cab odometer ledger (odometer at fueling + at each state
+// line) before filing.
 //
 // IFTA is filed QUARTERLY (Q1 due Apr 30, Q2 due Jul 31, Q3 due Oct 31,
 // Q4 due Jan 31). This card defaults to the current quarter and offers
@@ -67,11 +75,24 @@ export default function IftaEstimate({ driver }) {
   const anyOsrm  = states.some(r => r.source === 'estimated')
   const hasXX    = states.some(r => r.state === 'XX')
 
+  // Fuel side (all ESTIMATED; fleet-card gallons only).
+  const totalGal = (data && data.total_gallons) || 0
+  const fleetMpg = (data && data.fleet_mpg) || 0
+  const hasGal   = totalGal > 0 && fleetMpg > 0
+
   // One decimal, thousands-separated — matches the ledger's r1() precision.
   function mi(n) {
     return (Math.round((n || 0) * 10) / 10)
       .toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
   }
+  // Gallons — one decimal, thousands-separated.
+  function gal(n) {
+    return (Math.round((n || 0) * 10) / 10)
+      .toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+  }
+
+  // Per-state grid widens by one column when gallons are present.
+  const gridCols = hasGal ? '44px 1fr 1fr 0.85fr 1fr' : '56px 1fr 1fr 1fr'
 
   return (
     <div className="card" style={{ borderLeft: '3px solid ' + driverColor }}>
@@ -83,7 +104,7 @@ export default function IftaEstimate({ driver }) {
       >
         <div>
           <div style={{ fontFamily:'var(--font-head)', fontWeight:900, fontSize:15, color:driverColor, letterSpacing:'0.05em' }}>
-            IFTA MILES BY STATE
+            IFTA MILES + GALLONS
             <span style={{ marginLeft:8, fontSize:9, fontWeight:900, color:'#0A1628', background:'var(--amber)', borderRadius:4, padding:'2px 6px', letterSpacing:'0.08em', verticalAlign:'middle' }}>
               ESTIMATED
             </span>
@@ -99,6 +120,11 @@ export default function IftaEstimate({ driver }) {
             {loading ? '...' : mi(grand)}
           </div>
           <div style={{ fontSize:10, color:'var(--grey)', marginTop:2 }}>total miles</div>
+          {hasGal && !loading && (
+            <div style={{ fontSize:10, color:'var(--grey)', marginTop:3 }}>
+              {gal(totalGal)} gal {'\u00b7'} {fleetMpg.toFixed(2)} mpg
+            </div>
+          )}
           <div style={{ fontSize:12, color:'var(--grey)', marginTop:4 }}>{open ? '▲' : '▼'}</div>
         </div>
       </div>
@@ -141,31 +167,46 @@ export default function IftaEstimate({ driver }) {
       {open && states.length > 0 && (
         <div style={{ marginTop:14 }} onClick={e => e.stopPropagation()}>
 
-          {/* Loaded / deadhead split */}
+          {/* Loaded / deadhead split + fuel summary */}
           <div style={{ background:'var(--navy3)', borderRadius:8, padding:'10px 12px', marginBottom:12 }}>
             <div className="amount-row">
               <span className="label">Loaded Miles</span>
               <span className="value" style={{ color:'var(--green)' }}>{mi(loaded)}</span>
             </div>
-            <div className="amount-row" style={{ marginBottom:0 }}>
+            <div className="amount-row" style={{ marginBottom: hasGal ? undefined : 0 }}>
               <span className="label">Deadhead Miles</span>
               <span className="value" style={{ color:'var(--grey)' }}>{mi(deadhead)}</span>
             </div>
+            {hasGal && (
+              <>
+                <div style={{ height:1, background:'var(--border)', margin:'8px 0' }} />
+                <div className="amount-row">
+                  <span className="label">Gallons Purchased (fleet card)</span>
+                  <span className="value" style={{ color:'var(--amber)' }}>{gal(totalGal)}</span>
+                </div>
+                <div className="amount-row" style={{ marginBottom:0 }}>
+                  <span className="label">Fleet MPG (est.)</span>
+                  <span className="value" style={{ color:'var(--white)' }}>{fleetMpg.toFixed(2)}</span>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Per-state table */}
-          <div style={{ display:'grid', gridTemplateColumns:'56px 1fr 1fr 1fr', fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', padding:'0 2px 6px', borderBottom:'1px solid var(--border)' }}>
+          <div style={{ display:'grid', gridTemplateColumns:gridCols, fontSize:10, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', padding:'0 2px 6px', borderBottom:'1px solid var(--border)' }}>
             <div>STATE</div>
             <div style={{ textAlign:'right' }}>TOTAL</div>
             <div style={{ textAlign:'right' }}>LOADED</div>
-            <div style={{ textAlign:'right' }}>DEADHEAD</div>
+            <div style={{ textAlign:'right' }}>{hasGal ? 'DH' : 'DEADHEAD'}</div>
+            {hasGal && <div style={{ textAlign:'right' }}>GAL</div>}
           </div>
           {states.map(r => (
-            <div key={r.state} style={{ display:'grid', gridTemplateColumns:'56px 1fr 1fr 1fr', padding:'8px 2px', borderBottom:'1px solid rgba(255,255,255,0.05)', fontSize:12 }}>
+            <div key={r.state} style={{ display:'grid', gridTemplateColumns:gridCols, padding:'8px 2px', borderBottom:'1px solid rgba(255,255,255,0.05)', fontSize:12 }}>
               <div style={{ fontFamily:'var(--font-head)', fontWeight:900, color:'var(--white)' }}>{r.state}</div>
               <div style={{ textAlign:'right', color:'var(--amber)', fontWeight:700 }}>{mi(r.miles)}</div>
               <div style={{ textAlign:'right', color:'var(--green)' }}>{mi(r.loaded)}</div>
               <div style={{ textAlign:'right', color:'var(--grey)' }}>{mi(r.deadhead)}</div>
+              {hasGal && <div style={{ textAlign:'right', color:'var(--white)', fontWeight:700 }}>{gal(r.est_gallons)}</div>}
             </div>
           ))}
 
@@ -175,6 +216,14 @@ export default function IftaEstimate({ driver }) {
               ? 'Some legs use the OSRM fallback route (no ORS_API_KEY set). All figures are estimates for filing preparation.'
               : 'Truck-profile routed miles (ORS driving-hgv). All figures are estimates for filing preparation.'}
           </div>
+          {hasGal && (
+            <div style={{ fontSize:10, color:'var(--grey)', marginTop:4 }}>
+              Gallons ESTIMATED: fleet-card gallons purchased this quarter carved
+              across states by mile share (state miles {'\u00f7'} Fleet MPG); state
+              gallons sum to gallons purchased. Reconcile against Tim{'\u2019'}s in-cab
+              odometer ledger (fueling + state-line readings) before filing.
+            </div>
+          )}
           {hasXX && (
             <div style={{ fontSize:10, color:'var(--grey)', marginTop:4 }}>
               XX = unattributed boundary sliver, kept so state miles always sum
