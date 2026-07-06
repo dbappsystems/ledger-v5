@@ -245,8 +245,20 @@ export async function handleRouteIfta(env, T, loadId) {
 export async function handleIftaSummary(env, T, driver, url) {
   const from = url.searchParams.get('from') || '';
   const to = url.searchParams.get('to') || '';
+  // Quarter filter (IFTA is filed quarterly): ?q=1..4&year=YYYY.
+  // Year-safe against MM/DD/YYYY storage: match year via substr(7,4) and
+  // month via substr(1,2) — no lexicographic cross-year leakage, no data
+  // format migration required. from/to behavior preserved unchanged.
+  const q = parseInt(url.searchParams.get('q') || '0', 10);
+  const year = (url.searchParams.get('year') || '').replace(/[^0-9]/g, '');
   let where = 'tenant_id=? AND driver=?';
   const binds = [T, driver.toUpperCase()];
+  if (q >= 1 && q <= 4 && year.length === 4) {
+    const mStart = String((q - 1) * 3 + 1).padStart(2, '0');
+    const mEnd = String(q * 3).padStart(2, '0');
+    where += ' AND substr(entry_date,7,4)=? AND substr(entry_date,1,2)>=? AND substr(entry_date,1,2)<=?';
+    binds.push(year, mStart, mEnd);
+  }
   if (from) { where += ' AND entry_date >= ?'; binds.push(from); }
   if (to)   { where += ' AND entry_date <= ?'; binds.push(to); }
 
@@ -269,6 +281,7 @@ export async function handleIftaSummary(env, T, driver, url) {
       driver: driver.toUpperCase(),
       estimated: true,
       from, to,
+      quarter: (q >= 1 && q <= 4 && year.length === 4) ? { q, year } : null,
       grand_total_miles: r1(grand),
       states: results.map((r) => ({
         state: r.state,
