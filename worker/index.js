@@ -101,7 +101,28 @@ async function getV4Invoice(env, loadId) {
 // When a receipt has not yet been copied into the V5 bucket, fall back to the
 // V4 worker URL so the receipt still displays. Same proven pattern as invoices.
 // `kind` is 'maintenance-receipt' or 'fuel-receipt'.
-async function getV4Receipt(kind, id) {
+async function getV4Receipt(env, kind, id) {
+  // 1) Direct read from the bound legacy V4 bucket (self-contained, no auth).
+  //    V4 stored maintenance receipts at maintenance/{id}.(pdf|jpg) and fuel
+  //    receipts at fuel/{id}.(jpg|pdf). Read the same keys in-process.
+  try {
+    if (env && env.R2_V4) {
+      const prefix = kind === 'fuel-receipt' ? 'fuel/' : 'maintenance/';
+      // try both extensions; prefer jpg for fuel, pdf for maintenance, then swap
+      const order = kind === 'fuel-receipt'
+        ? [['jpg','image/jpeg'],['pdf','application/pdf']]
+        : [['pdf','application/pdf'],['jpg','image/jpeg']];
+      for (const [ext, ct] of order) {
+        const obj = await env.R2_V4.get(prefix + id + '.' + ext);
+        if (obj && obj.size > 500) {
+          const buf = await obj.arrayBuffer();
+          return { body: buf, contentType: ct };
+        }
+      }
+    }
+  } catch (_) { /* fall through to URL fallback */ }
+  // 2) Fallback: fetch the V4 Worker URL. V4 auth-walls this route, so the
+  //    unauthenticated fetch may 404; the direct bucket read above is primary.
   try {
     const res = await fetch(V4_BASE + '/api/' + kind + '/' + id);
     if (!res.ok) return null;
@@ -723,7 +744,7 @@ export default {
           const d = await diagV4Receipt('maintenance-receipt', entryId);
           return json({ diag: true, entryId, v4base: V4_BASE, result: d });
         }
-        const v4 = await getV4Receipt('maintenance-receipt', entryId);
+        const v4 = await getV4Receipt(env, 'maintenance-receipt', entryId);
         if (!v4) return new Response('Receipt not found', { status: 404, headers: CORS });
         return new Response(v4.body, {
           headers: { ...CORS, 'Content-Type': v4.contentType || 'image/jpeg', 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
@@ -1178,7 +1199,7 @@ export default {
             headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
           });
         }
-        const v4 = await getV4Receipt('fuel-receipt', entryId);
+        const v4 = await getV4Receipt(env, 'fuel-receipt', entryId);
         if (!v4) return new Response('Receipt not found', { status: 404, headers: CORS });
         return new Response(v4.body, {
           headers: { ...CORS, 'Content-Type': v4.contentType || 'image/jpeg', 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
