@@ -249,64 +249,6 @@ export default {
       } catch(e) { return json({ error: e.message }, 500); }
     }
 
-    // TEMP DIAGNOSTIC (key-gated, no session needed): list real object keys in
-    // the bound legacy V4 bucket so we can see the exact filenames the import
-    // wrote. Bucket list is not tenant data, so it sits before requireTenant.
-    // REMOVE immediately after reading the answer.
-    if (path === '/api/admin/v4-keys' && request.method === 'GET') {
-      if ((url.searchParams.get('key') || '') !== 'edgerton-migrate-2026') return json({ error: 'Forbidden' }, 403);
-      if (!env.R2_V4) return json({ error: 'R2_V4 not bound' }, 500);
-      const listing = await env.R2_V4.list({ limit: 1000 });
-      const keys = (listing.objects || []).map(o => ({ key: o.key, size: o.size }));
-      return json({ ok: true, count: keys.length, truncated: !!listing.truncated, keys });
-    }
-
-    // ── ONE-TIME ADMIN: migrate all legacy V4 invoices into V5 ───────────
-    // POST-gated by a non-secret URL key. Loops every load for the caller's
-    // tenant, pulls each invoice PDF from the V4 worker URL, writes it into
-    // the V5 bucket at {tenant}/invoices/{loadId}.pdf, stamps invoice_url.
-    // Skips loads whose V4 invoice 404s. TEMPORARY — removed after migration.
-    if (path === '/api/admin/migrate-v4' && request.method === 'POST') {
-      try {
-        const key = url.searchParams.get('key') || '';
-        if (key !== 'edgerton-migrate-2026') return json({ error: 'Forbidden' }, 403);
-        if (!env.R2) return json({ error: 'R2 not configured' }, 500);
-        let ctxA;
-        try { ctxA = await requireTenant(env, request); }
-        catch (e) { return json({ error: e.message }, e.status || 401); }
-        const TA = ctxA.tenant_id;
-        const { results } = await env.DB.prepare(
-          'SELECT id, driver, load_number FROM loads WHERE tenant_id=?'
-        ).bind(TA).all();
-        const out = [];
-        let saved = 0, already = 0, nofile = 0;
-        for (const row of results) {
-          const loadId = row.id;
-          const existing = await env.R2.get(TA + '/invoices/' + loadId + '.pdf');
-          if (existing && existing.size > 5000) {
-            already++;
-            out.push({ load: row.load_number, driver: row.driver, status: 'already', bytes: existing.size });
-            continue;
-          }
-          const v4 = await getV4Invoice(env, loadId);
-          if (!v4) {
-            nofile++;
-            out.push({ load: row.load_number, driver: row.driver, status: 'no-file' });
-            continue;
-          }
-          const buf = await v4.arrayBuffer();
-          await env.R2.put(TA + '/invoices/' + loadId + '.pdf', buf, {
-            httpMetadata: { contentType: 'application/pdf' },
-          });
-          await env.DB.prepare('UPDATE loads SET invoice_url=? WHERE id=? AND tenant_id=?')
-            .bind('/api/invoice/' + loadId, loadId, TA).run();
-          saved++;
-          out.push({ load: row.load_number, driver: row.driver, status: 'saved', bytes: buf.byteLength });
-        }
-        return json({ ok: true, tenant: TA, total: results.length, saved, already, nofile, detail: out });
-      } catch(e) { return json({ error: e.message }, 500); }
-    }
-
     let ctx;
     try {
       ctx = await requireTenant(env, request);
