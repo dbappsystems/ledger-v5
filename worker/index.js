@@ -7,6 +7,7 @@
 import { handleRouteIfta, handleIftaSummary } from './ifta.js';
 import { handleIftaManual } from './ifta_manual.js';
 import { handleRatecons } from './ratecons.js';
+import { handleSignedMint, handleSignedServe } from './signed.js';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -180,6 +181,13 @@ export default {
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: CORS });
     }
+    // Signed asset serve is public-by-token (no session): the short-lived,
+    // non-guessable token IS the permission. Dispatched BEFORE requireTenant so
+    // a plain <img>/<iframe>/new-tab link renders without a session in the URL.
+    {
+      const signedResp = await handleSignedServe(request, env, url);
+      if (signedResp) return signedResp;
+    }
 
     if (path === '/api/auth/login' && request.method === 'POST') {
       try {
@@ -261,6 +269,10 @@ export default {
     // in its own module; returns a Response when it owns the path, else null.
     const rcResp = await handleRatecons(request, env, ctx, T, url);
     if (rcResp) return rcResp;
+    // Mint a short-lived signed URL for an owned asset. Runs AFTER requireTenant
+    // so ownership is re-verified against ctx before a token is issued.
+    const signedMint = await handleSignedMint(request, env, ctx, T, url);
+    if (signedMint) return signedMint;
 
     if (path === '/api/ocr' && request.method === 'POST') {
       try {
