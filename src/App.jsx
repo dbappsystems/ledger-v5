@@ -192,6 +192,31 @@ export default function App() {
     } catch { /* non-fatal; app still works with defaults */ }
   }
 
+  // CARRIER RATE TOGGLE: the owner sets the company-keep % (driver_split_pct)
+  // straight from the header. Writes the ONE tenant value via the owner-only
+  // PATCH /api/tenant/settings (worker clamps 1..50), then refreshes
+  // tenantSettings in place so every settlement + paystub recomputes at the new
+  // rate immediately — the same all-time running-balance math, new percentage.
+  // Owner-only by construction: the control is not rendered for driver or
+  // bookkeeper, and the worker rejects the PATCH for any non-owner role.
+  const [savingSplit, setSavingSplit] = useState(false)
+  async function saveSplitPct(pct) {
+    if (savingSplit) return
+    const current = (tenantSettings && tenantSettings.driver_split_pct != null)
+      ? Number(tenantSettings.driver_split_pct) : 10
+    if (Number(pct) === current) return
+    setSavingSplit(true)
+    try {
+      await api('/api/tenant/settings', { method:'PATCH', json:{ driver_split_pct: Number(pct) } })
+      await loadTenantSettings()   // re-read the row so all math sees the new %
+      showToast('Carrier rate set to ' + pct + '%')
+    } catch (e) {
+      showToast(e && e.message ? e.message : 'Could not update rate')
+    } finally {
+      setSavingSplit(false)
+    }
+  }
+
   async function checkCredentials(driverName) {
     try {
       const data  = await api('/api/credentials/' + driverName)
@@ -407,6 +432,34 @@ export default function App() {
     )
   }
 
+  // CARRIER RATE TOGGLE (owner only) — sits just right of the company name in
+  // the header. Three fixed rates (10 / 15 / 20). The active rate is the tenant's
+  // live driver_split_pct; tapping another writes it. Not rendered for driver or
+  // bookkeeper. Compact so it never crowds the wordmark on an iPhone header.
+  function RateToggle() {
+    if (!isOwner) return null
+    const active = (tenantSettings && tenantSettings.driver_split_pct != null)
+      ? Number(tenantSettings.driver_split_pct) : 10
+    const rates = [10, 15, 20]
+    return (
+      <div title="Carrier rate charged to the driver" style={{ display:'flex', alignItems:'center', gap:3, marginLeft:8, flexShrink:0 }}>
+        <span style={{ fontSize:9, color:'var(--grey)', fontFamily:'var(--font-head)', fontWeight:700, letterSpacing:'0.04em', marginRight:1 }}>RATE</span>
+        {rates.map(r => {
+          const on = active === r
+          return (
+            <button key={r} onClick={() => saveSplitPct(r)} disabled={savingSplit}
+              style={{ padding:'4px 7px', borderRadius:6, border: on ? 'none' : '1px solid var(--border)',
+                       background: on ? 'var(--amber)' : 'var(--navy3)', color: on ? '#0A1628' : 'var(--grey)',
+                       fontSize:11, fontFamily:'var(--font-head)', fontWeight:900, lineHeight:1,
+                       cursor: savingSplit ? 'default' : 'pointer', opacity: savingSplit && !on ? 0.5 : 1 }}>
+              {r}%
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
+
   // -- LOGIN SCREEN ------------------------------------------------------
   if (!driver) {
     return (
@@ -468,7 +521,10 @@ export default function App() {
 
       {/* HEADER */}
       <div className="app-header">
-        <AppLogo />
+        <div style={{ display:'flex', alignItems:'center', minWidth:0 }}>
+          <AppLogo />
+          <RateToggle />
+        </div>
         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
           <ThemeToggle />
           <div style={{ fontSize:12, color:'var(--grey)', fontFamily:'var(--font-head)' }}>{driver}</div>
