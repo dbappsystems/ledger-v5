@@ -35,6 +35,11 @@
 // desks read activeDriver, which falls back to self until the tenant driver
 // list loads, so nothing ever renders with a null driver. A plain 'driver'
 // role is untouched: activeDriver === driver for them, exactly as before.
+//
+// LIVE STATE MILES (2026-07-07): a floating LOG STATE MILES button
+// (IftaDailyLog.jsx) is rendered on the Loads list for drivers. It logs the
+// driver's own odometer at each state line (raw daily chain) via POST
+// /api/ifta/manual, writing the FACT record beside the routed IFTA estimate.
 
 import { useState, useEffect } from 'react'
 import RateCon          from './RateCon.jsx'
@@ -49,6 +54,7 @@ import IftaEstimate     from './IftaEstimate.jsx'
 import SettlementReport from './SettlementReport.jsx'
 import BookkeeperProfile from './BookkeeperProfile.jsx'
 import Feedback         from './Feedback.jsx'
+import IftaDailyLog     from './IftaDailyLog.jsx'
 import { useDrivers }   from './useDrivers.js'
 
 import { api, login as apiLogin, logout as apiLogout, getSession } from './api.js'
@@ -596,6 +602,13 @@ export default function App() {
         </button>
 
       </div>
+
+      {/* LIVE state-line odometer log — floating button on the Loads front
+          page (driver only, list view). Logs the driver's own odometer at each
+          state line as the FACT record beside the routed IFTA estimate. */}
+      {!isBookkeeper && tab === 'loads' && loadsSubView === 'list' && (
+        <IftaDailyLog driver={activeDriver} showToast={showToast} />
+      )}
 
       {/* In-app feedback bubble — logged-in only, floats above the tab bar,
           posts to the DB (no email). */}
