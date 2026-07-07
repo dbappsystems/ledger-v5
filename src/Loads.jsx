@@ -4,7 +4,9 @@
 //
 // AUTH MIGRATION: load PATCH + DELETE now go through the token api() client.
 //   DELETE preserves the 403 ownership message via err.status. The `api` URL
-//   prop is gone; the invoice link uses apiUrl() + a ?t=<token> query.
+//   prop is gone; the invoice link uses a short-lived signed URL
+//   (POST /api/signed-url) instead of a ?t=<token> query, so the session
+//   token never leaks through browser history, server logs, or Referer.
 //
 // INVOICE PDF (single button):
 //   VIEW INVOICE opens the stored PDF the load generated at billing time —
@@ -33,7 +35,7 @@
 
 import { useState, useEffect } from 'react'
 import { jsPDF } from 'jspdf'
-import { api as apiClient, apiUrl, getToken } from './api.js'
+import { api as apiClient, apiUrl } from './api.js'
 import { useDrivers } from './useDrivers.js'
 
 // Safely turn a D1 column that may be an array, a JSON string, null, or ''
@@ -472,11 +474,29 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     const d = parseAppDate(loadDate(load))
     return d ? d.getTime() : 0
   }
-  // Open the stored PDF (V5, with V4 fallback in the worker) in a new tab.
-  function viewStoredInvoice(load) {
-    const t = getToken()
-    const u = apiUrl('/api/invoice/' + load.id) + (t ? ('?t=' + encodeURIComponent(t)) : '')
-    window.open(u, '_blank', 'noopener,noreferrer')
+  // Open the stored invoice PDF (V5, with V4 fallback in the worker) via a
+  // short-lived signed URL — no session token in the URL (no ?t= leak through
+  // history/logs/Referer). The tab is opened SYNCHRONOUSLY (iOS Chrome popup
+  // rule) then pointed at the signed link once the mint call resolves.
+  async function viewStoredInvoice(load) {
+    const win = window.open('', '_blank', 'noopener,noreferrer')
+    try {
+      const res = await apiClient('/api/signed-url', {
+        method: 'POST',
+        json:   { type: 'invoice', id: load.id },
+      })
+      if (res && res.url) {
+        const full = apiUrl(res.url)
+        if (win) win.location = full
+        else window.open(full, '_blank', 'noopener,noreferrer')
+      } else {
+        if (win) win.close()
+        showToast('Could not open invoice — try again')
+      }
+    } catch (e) {
+      if (win) win.close()
+      showToast('Could not open invoice: ' + (e.message || 'try again'))
+    }
   }
 
   // ── COMPUTED ──────────────────────────────────────────────
