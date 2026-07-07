@@ -6,8 +6,8 @@
 //   * The owner's cut comes from the TENANT SETTING (driver_split_pct, 1..50),
 //     passed in as `ownerCutPct` (a fraction 0.01..0.50). Default 0.10 only as
 //     a safety fallback if a caller forgets to pass it.
-//   * "Owner-operator" loads (driver keeps 100%, no split) are flagged per-load
-//     via load.is_owner_operator instead of matching a hardcoded name like BRUCE.
+//   * EVERY driver is charged the carrier rate on EVERY load, owner operators
+//     included (DADDYBOY RULE). There is no 100%-keep exemption in the math.
 //
 // ACCOUNTING MODEL (unchanged from v4 behavior):
 //   "Still owed to the company" is an all-time RUNNING BALANCE. Uses every load,
@@ -84,19 +84,16 @@ export function getLoadTotals(load) {
   return { comdataTotal, lumperTotal, incTotal }
 }
 
-// calcPay now takes the owner cut as a parameter (from the tenant setting).
-//   ownerCutPct: fraction the COMPANY keeps (e.g. 0.10).
-//   An owner-operator load (load.is_owner_operator truthy) keeps 100%: the
-//   driver nets the full base and the company cut is reported as 0 for that load
-//   — same effect the old code achieved by checking `driver === 'BRUCE'`, but
-//   now driven by per-load data instead of a hardcoded name.
+// calcPay takes the owner cut as a parameter (from the tenant setting).
+//   ownerCutPct: fraction the CARRIER keeps (e.g. 0.15 = carrier keeps 15%).
+//   DADDYBOY RULE (permanent): EVERY driver is charged the carrier rate on EVERY
+//   load — owner operators included. There is NO 100%-keep exemption. The old
+//   `if (load.is_owner_operator) keep 100%` branch has been removed so no flag,
+//   on the load or the driver, can ever zero out the carrier's cut.
 export function calcPay(load, ownerCutPct = DEFAULT_OWNER_CUT) {
   const cut       = normalizeOwnerCut(ownerCutPct)
   const base      = parseFloat(load.base_pay) || 0
   const detention = parseFloat(load.detention) || 0
-  if (load.is_owner_operator) {
-    return { gross: base, ownerCut: 0, driverNet: base }
-  }
   return { gross: base, ownerCut: base * cut, driverNet: (base * (1 - cut)) + detention }
 }
 
@@ -196,8 +193,8 @@ export function recurringChargesForWeek(recurringCharges, driverName, weekPayDat
 }
 
 // -- RUNNING BALANCE — all-time, the ONE formula -----------------------------
-// Now takes ownerCutPct from the tenant. Behavior identical to v4 when
-// ownerCutPct = 0.10 and no loads are flagged owner-operator.
+// Takes ownerCutPct from the tenant. The carrier cut is applied to every load
+// for every driver — no owner-operator exemption (DADDYBOY RULE).
 //
 // carrierAdvances (OPTIONAL): array of carrier_advances rows for this driver.
 //   Omit it (or pass []) and the result is byte-identical to before — this is
