@@ -206,7 +206,7 @@ export async function handleSignedServe(request, env, url) {
     if (!token) return new Response('Not found', { status: 404, headers: CORS });
 
     const row = await env.DB.prepare(
-      'SELECT tenant_id, r2_key, content_type, expires_at FROM signed_assets WHERE token=?'
+      'SELECT tenant_id, r2_key, content_type, asset_type, asset_id, expires_at FROM signed_assets WHERE token=?'
     ).bind(token).first();
     if (!row) return new Response('Not found', { status: 404, headers: CORS });
 
@@ -216,16 +216,39 @@ export async function handleSignedServe(request, env, url) {
     }
 
     const object = await env.R2.get(row.r2_key);
-    if (!object) return new Response('Not found', { status: 404, headers: CORS });
+    if (object) {
+      return new Response(object.body, {
+        headers: {
+          ...CORS,
+          'Content-Type': row.content_type || object.httpMetadata?.contentType || 'application/octet-stream',
+          'Content-Disposition': 'inline',
+          'Cache-Control': 'private, max-age=60',
+        },
+      });
+    }
 
-    return new Response(object.body, {
-      headers: {
-        ...CORS,
-        'Content-Type': row.content_type || object.httpMetadata?.contentType || 'application/octet-stream',
-        'Content-Disposition': 'inline',
-        'Cache-Control': 'private, max-age=60',
-      },
-    });
+    // V4 FALLBACK (invoices only): migrated loads store their PDF in the legacy
+    // V4 bucket (env.R2_V4) at invoices/{loadId}.pdf, not in V5's env.R2. The old
+    // direct /api/invoice route had this fallback; the signed-serve path dropped
+    // it, 404ing every V4-migrated invoice. Restore it here so the billed
+    // document is the on-screen document (Beards: Truth as Architecture).
+    if (row.asset_type === 'invoice' && row.asset_id && env.R2_V4) {
+      try {
+        const v4obj = await env.R2_V4.get('invoices/' + row.asset_id + '.pdf');
+        if (v4obj && v4obj.size > 1000) {
+          return new Response(v4obj.body, {
+            headers: {
+              ...CORS,
+              'Content-Type': 'application/pdf',
+              'Content-Disposition': 'inline',
+              'Cache-Control': 'private, max-age=60',
+            },
+          });
+        }
+      } catch (_) { /* fall through to 404 */ }
+    }
+
+    return new Response('Not found', { status: 404, headers: CORS });
   } catch (e) {
     return new Response('Error', { status: 500, headers: CORS });
   }
