@@ -5,6 +5,7 @@
 // change to a dated 4.5 snapshot; V4 confirms 4-6 is valid on this API key.
 
 import { handleRouteIfta, handleIftaSummary } from './ifta.js';
+import { handleIftaManual } from './ifta_manual.js';
 import { handleRatecons } from './ratecons.js';
 
 const CORS = {
@@ -1707,6 +1708,19 @@ export default {
       try {
         const loadId = path.slice('/api/loads/'.length, -('/route-ifta'.length));
         const out = await handleRouteIfta(env, T, loadId);
+        return json(out.body, out.status);
+      } catch(e) { return json({ error: e.message }, 500); }
+    }
+
+    // ── LIVE MANUAL IFTA (driver-entered state-line odometer chain) ──────
+    // POST /api/ifta/manual — the FACT side of IFTA. The driver stamps the
+    // odometer at each state line; this writes ifta_segments (source=
+    // 'driver-manual') + ifta_miles (source='manual'), replacing this load's
+    // routed estimate. Placed BEFORE the generic GET /api/ifta/:driver so the
+    // literal path 'manual' is never mistaken for a driver name.
+    if (path === '/api/ifta/manual' && request.method === 'POST') {
+      try {
+        const out = await handleIftaManual(env, T, ctx, request);
         return json(out.body, out.status);
       } catch(e) { return json({ error: e.message }, 500); }
     }
