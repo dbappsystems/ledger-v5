@@ -1,1 +1,274 @@
-Ly8gc3JjL0lmdGFSZXBvcnQuanN4Ci8vIChjKSBkYmFwcHN5c3RlbXMuY29tIHwgZGFkZHlib3lhcHBzLmNvbQovLyBMb2FkIExlZGdlciBWNSDigJQgSUZUQSBTVEFURU1FTlQgKHByaW50YWJsZSkKLy8KLy8gQSBmdWxsLXNjcmVlbiwgcHJpbnQtcmVhZHkgSUZUQSBqdXJpc2RpY3Rpb24gc3RhdGVtZW50IHRoYXQgbWF0Y2hlcyB0aGUKLy8gU2V0dGxlbWVudCBTdGF0ZW1lbnQncyBsb29rIGFuZCBmZWVsIHRva2VuLWZvci10b2tlbiAoU3RhdGVtZW50T3ZlcmxheSBpbgovLyBTZXR0bGVtZW50UmVwb3J0LmpzeCk6IGRhcmsgbmF2eSBoZWFkZXIgYmFyLCBDT01QQU5ZL0RSSVZFUiBpbmZvIGNhcmQsCi8vIFRIL1REL1RGIHRhYmxlIHN0eWxlcywgYW1iZXIgbm90ZSBib3hlcywgZGFyayB0b3RhbCBiYXJzLCBmb290ZXIgbGluZS4KLy8KLy8gREFUQTogdGhpcyByZWFkcyB0aGUgU0FNRSBwYXlsb2FkIHRoZSBJRlRBIGNhcmQgZmV0Y2hlcyDigJQKLy8gICBHRVQgL2FwaS9pZnRhL3tkcml2ZXJ9P3E9ezEuLjR9JnllYXI9e1lZWVl9Ci8vIGFuZCBiaW5kcyBvbmx5IHJlYWwgZmllbGRzIHRoZSBXb3JrZXIgcmV0dXJuczoKLy8gICBzdGF0ZXNbXSAgeyBzdGF0ZSwgbWlsZXMsIGxvYWRlZCwgZGVhZGhlYWQsIGVzdF9nYWxsb25zIH0KLy8gICBncmFuZF90b3RhbF9taWxlcywgdG90YWxfZ2FsbG9ucywgZmxlZXRfbXBnCi8vICAgcHVyY2hhc2VkX2dhbGxvbnNfYnlfc3RhdGUgIHsgU1Q6IGdhbGxvbnMgfQovLyAgIHNlZ21lbnRzW10gIHsgZGF0ZSwgc3RhdGUsIG9kb19zdGFydCwgb2RvX2VuZCwgbWlsZXMsIGxlZ190eXBlLCBsb2FkX2lkIH0KLy8gTm90aGluZyBpcyBmYWJyaWNhdGVkLiBKdXJpc2RpY3Rpb25zIHdpdGggcHVyY2hhc2VkIGdhbGxvbnMgYnV0IG5vIG1pbGVzIGFyZQovLyBzdGlsbCBsaXN0ZWQgc28gdGF4LXBhaWQgZ2FsbG9ucyBhbHdheXMgcmVjb25jaWxlIHRvIGdhbGxvbnMgcHVyY2hhc2VkLgovLwovLyBUaGUgd29yZCAiZXN0aW1hdGVkIiBhcHBlYXJzIG5vd2hlcmUgYnkgZGVzaWduOiBkcml2ZXJzIGF1ZGl0IGFuZCBjb3JyZWN0Ci8vIHRoZXNlIGZpZ3VyZXMgYmVmb3JlIHRoaXMgc3RhdGVtZW50IGlzIHByaW50ZWQgZm9yIGZpbGluZy4KCmltcG9ydCB7IHVzZVN0YXRlIH0gZnJvbSAncmVhY3QnCmltcG9ydCB7IGFwaSBhcyBhcGlDbGllbnQgfSBmcm9tICcuL2FwaS5qcycKaW1wb3J0IHsgdXNlRHJpdmVycyB9IGZyb20gJy4vdXNlRHJpdmVycy5qcycKCmNvbnN0IFFMQUJFTCA9IFsnSmFuIDEgLSBNYXIgMzEnLCAnQXByIDEgLSBKdW4gMzAnLCAnSnVsIDEgLSBTZXAgMzAnLCAnT2N0IDEgLSBEZWMgMzEnXQoKLy8gT25lIGRlY2ltYWwsIHRob3VzYW5kcy1zZXBhcmF0ZWQgKG1hdGNoZXMgdGhlIGxlZGdlcidzIHIxKCkgcHJlY2lzaW9uKS4KZnVuY3Rpb24gbWkobikgewogIHJldHVybiAoTWF0aC5yb3VuZCgobiB8fCAwKSAqIDEwKSAvIDEwKQogICAgLnRvTG9jYWxlU3RyaW5nKCdlbi1VUycsIHsgbWluaW11bUZyYWN0aW9uRGlnaXRzOiAxLCBtYXhpbXVtRnJhY3Rpb25EaWdpdHM6IDEgfSkKfQpmdW5jdGlvbiBnYWwobikgewogIGlmIChuID09IG51bGwpIHJldHVybiAnLScKICByZXR1cm4gKE1hdGgucm91bmQoKG4gfHwgMCkgKiAxMDAwKSAvIDEwMDApCiAgICAudG9Mb2NhbGVTdHJpbmcoJ2VuLVVTJywgeyBtaW5pbXVtRnJhY3Rpb25EaWdpdHM6IDMsIG1heGltdW1GcmFjdGlvbkRpZ2l0czogMyB9KQp9CgovLyAtLSBGVUxMIElGVEEgU1RBVEVNRU5UIE9WRVJMQVkgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCmZ1bmN0aW9uIElmdGFTdGF0ZW1lbnRPdmVybGF5KHsgZGF0YSwgZHJpdmVyTmFtZSwgaGVhZGVyQ29sb3IsIHF0ciwgeWVhciwgb25DbG9zZSB9KSB7CiAgY29uc3QgVEggID0geyBiYWNrZ3JvdW5kOicjMWEyYTNhJywgY29sb3I6JyNmZmYnLCBwYWRkaW5nOic4cHggMTBweCcsIGZvbnRTaXplOjExLCBmb250V2VpZ2h0OjcwMCwgdGV4dEFsaWduOidsZWZ0JywgZm9udEZhbWlseTondmFyKC0tZm9udC1oZWFkKScsIGxldHRlclNwYWNpbmc6JzAuMDRlbScgfQogIGNvbnN0IFREICA9IHsgcGFkZGluZzonOHB4IDEwcHgnLCBmb250U2l6ZToxMiwgYm9yZGVyQm90dG9tOicxcHggc29saWQgI2U4ZThlOCcsIGNvbG9yOicjMjIyJywgdmVydGljYWxBbGlnbjonbWlkZGxlJyB9CiAgY29uc3QgVERyID0geyAuLi5URCwgdGV4dEFsaWduOidyaWdodCcsIGZvbnRGYW1pbHk6J3ZhcigtLWZvbnQtaGVhZCknLCBmb250V2VpZ2h0OjYwMCB9CiAgY29uc3QgVEYgID0geyAuLi5URCwgYmFja2dyb3VuZDonI2YwZjBmMCcsIGZvbnRXZWlnaHQ6NzAwLCBjb2xvcjonIzExMScgfQogIGNvbnN0IFRGciA9IHsgLi4uVEYsIHRleHRBbGlnbjoncmlnaHQnLCBmb250RmFtaWx5Oid2YXIoLS1mb250LWhlYWQpJyB9CgogIGNvbnN0IHN0YXRlcyAgID0gKGRhdGEgJiYgZGF0YS5zdGF0ZXMpIHx8IFtdCiAgY29uc3QgZ3JhbmQgICAgPSAoZGF0YSAmJiBkYXRhLmdyYW5kX3RvdGFsX21pbGVzKSB8fCAwCiAgY29uc3QgbG9hZGVkICAgPSBzdGF0ZXMucmVkdWNlKChzLCByKSA9PiBzICsgKHIubG9hZGVkICAgfHwgMCksIDApCiAgY29uc3QgZGVhZGhlYWQgPSBzdGF0ZXMucmVkdWNlKChzLCByKSA9PiBzICsgKHIuZGVhZGhlYWQgfHwgMCksIDApCiAgY29uc3QgdG90YWxHYWwgPSAoZGF0YSAmJiBkYXRhLnRvdGFsX2dhbGxvbnMpIHx8IDAKICBjb25zdCBmbGVldE1wZyA9IChkYXRhICYmIGRhdGEuZmxlZXRfbXBnKSB8fCAwCiAgY29uc3QgcHVyY2ggICAgPSAoZGF0YSAmJiBkYXRhLnB1cmNoYXNlZF9nYWxsb25zX2J5X3N0YXRlKSB8fCBudWxsCiAgY29uc3Qgc2VnbWVudHMgPSAoZGF0YSAmJiBBcnJheS5pc0FycmF5KGRhdGEuc2VnbWVudHMpKSA/IGRhdGEuc2VnbWVudHMgOiBbXQoKICBjb25zdCBwZXJpb2RMYWJlbCA9IHF0ciA+PSAxID8gKCdRJyArIHF0ciArICcgJyArIHllYXIpIDogJ0FsbCBSZWNvcmRlZCcKICBjb25zdCB3aW5kb3dMYWJlbCA9IHF0ciA+PSAxID8gKFFMQUJFTFtxdHIgLSAxXSArICcgJyArIHllYXIpIDogJ0FsbCByZWNvcmRlZCBhY3Rpdml0eScKICBjb25zdCBnZW5lcmF0ZWQgICA9IG5ldyBEYXRlKCkudG9Mb2NhbGVEYXRlU3RyaW5nKCdlbi1VUycsIHsgbW9udGg6J2xvbmcnLCBkYXk6J251bWVyaWMnLCB5ZWFyOidudW1lcmljJyB9KQoKICAvLyBKdXJpc2RpY3Rpb24gcm93czogZXZlcnkgc3RhdGUgd2l0aCBtaWxlcywgcGx1cyBhbnkgc3RhdGUgdGhhdCBvbmx5IGhhcwogIC8vIHB1cmNoYXNlZCBnYWxsb25zIChzbyB0YXgtcGFpZCBnYWxsb25zIHJlY29uY2lsZSB0byBnYWxsb25zIHB1cmNoYXNlZCkuCiAgY29uc3QganNldCA9IHt9CiAgZm9yIChjb25zdCByIG9mIHN0YXRlcykganNldFtyLnN0YXRlXSA9IHsgc3RhdGU6ci5zdGF0ZSwgbWlsZXM6ci5taWxlc3x8MCwgbG9hZGVkOnIubG9hZGVkfHwwLCBkZWFkaGVhZDpyLmRlYWRoZWFkfHwwLCB0YXhhYmxlOnIuZXN0X2dhbGxvbnMsIHB1cmNoYXNlZDoocHVyY2ggJiYgcHVyY2hbci5zdGF0ZV0hPW51bGwpP3B1cmNoW3Iuc3RhdGVdOm51bGwgfQogIGlmIChwdXJjaCkgewogICAgZm9yIChjb25zdCBzdCBvZiBPYmplY3Qua2V5cyhwdXJjaCkpIHsKICAgICAgaWYgKCFqc2V0W3N0XSkganNldFtzdF0gPSB7IHN0YXRlOnN0LCBtaWxlczowLCBsb2FkZWQ6MCwgZGVhZGhlYWQ6MCwgdGF4YWJsZTpudWxsLCBwdXJjaGFzZWQ6cHVyY2hbc3RdIH0KICAgIH0KICB9CiAgY29uc3QganJvd3MgPSBPYmplY3QudmFsdWVzKGpzZXQpLnNvcnQoKGEsIGIpID0+IGIubWlsZXMgLSBhLm1pbGVzKQoKICBjb25zdCB0b3RUYXhhYmxlICAgPSBqcm93cy5yZWR1Y2UoKHMsIHIpID0+IHMgKyAoci50YXhhYmxlICAgfHwgMCksIDApCiAgY29uc3QgdG90UHVyY2hhc2VkID0ganJvd3MucmVkdWNlKChzLCByKSA9PiBzICsgKHIucHVyY2hhc2VkIHx8IDApLCAwKQoKICByZXR1cm4gKAogICAgPGRpdiBzdHlsZT17eyBwb3NpdGlvbjonZml4ZWQnLCB0b3A6MCwgbGVmdDowLCByaWdodDowLCBib3R0b206MCwgYmFja2dyb3VuZDonI2ZmZicsIHpJbmRleDo5OTk5LCBvdmVyZmxvd1k6J2F1dG8nLCBXZWJraXRPdmVyZmxvd1Njcm9sbGluZzondG91Y2gnIH19PgogICAgICA8ZGl2IHN0eWxlPXt7IHBvc2l0aW9uOidzdGlja3knLCB0b3A6MCwgYmFja2dyb3VuZDonIzFhMmEzYScsIHBhZGRpbmc6JzEycHggMTZweCcsIGRpc3BsYXk6J2ZsZXgnLCBhbGlnbkl0ZW1zOidjZW50ZXInLCBqdXN0aWZ5Q29udGVudDonc3BhY2UtYmV0d2VlbicsIHpJbmRleDoxMCB9fT4KICAgICAgICA8ZGl2PgogICAgICAgICAgPGRpdiBzdHlsZT17eyBmb250U2l6ZToxMSwgY29sb3I6J3JnYmEoMjU1LDI1NSwyNTUsMC42KScsIGZvbnRGYW1pbHk6J3ZhcigtLWZvbnQtaGVhZCknLCBsZXR0ZXJTcGFjaW5nOicwLjA4ZW0nIH19PklGVEEgU1RBVEVNRU5UPC9kaXY+CiAgICAgICAgICA8ZGl2IHN0eWxlPXt7IGZvbnRTaXplOjE2LCBmb250RmFtaWx5Oid2YXIoLS1mb250LWhlYWQpJywgZm9udFdlaWdodDo5MDAsIGNvbG9yOiBoZWFkZXJDb2xvciB8fCAnIzY0YjVmNicgfX0+e2RyaXZlck5hbWV9PC9kaXY+CiAgICAgICAgICA8ZGl2IHN0eWxlPXt7IGZvbnRTaXplOjEwLCBjb2xvcjoncmdiYSgyNTUsMjU1LDI1NSwwLjUpJywgZm9udEZhbWlseTondmFyKC0tZm9udC1oZWFkKScsIGxldHRlclNwYWNpbmc6JzAuMDZlbScsIG1hcmdpblRvcDoyIH19PlBFUklPRCBBQ1RJVklUWToge3BlcmlvZExhYmVsfTwvZGl2PgogICAgICAgIDwvZGl2PgogICAgICAgIDxidXR0b24gb25DbGljaz17b25DbG9zZX0gc3R5bGU9e3sgYmFja2dyb3VuZDoncmdiYSgyNTUsMjU1LDI1NSwwLjE1KScsIGJvcmRlcjonbm9uZScsIGNvbG9yOicjZmZmJywgYm9yZGVyUmFkaXVzOjgsIHBhZGRpbmc6JzhweCAxNnB4JywgZm9udFNpemU6MTQsIGZvbnRGYW1pbHk6J3ZhcigtLWZvbnQtaGVhZCknLCBmb250V2VpZ2h0OjcwMCwgY3Vyc29yOidwb2ludGVyJyB9fT5YIENMT1NFPC9idXR0b24+CiAgICAgIDwvZGl2PgogICAgICA8ZGl2IHN0eWxlPXt7IHBhZGRpbmc6JzE2cHgnLCBtYXhXaWR0aDo2MDAsIG1hcmdpbjonMCBhdXRvJyB9fT4KCiAgICAgICAgey8qIElORk8gQ0FSRCAqL30KICAgICAgICA8ZGl2IHN0eWxlPXt7IGJhY2tncm91bmQ6JyNmOGY4ZjgnLCBib3JkZXJSYWRpdXM6OCwgcGFkZGluZzonMTJweCAxNHB4JywgbWFyZ2luQm90dG9tOjE2LCBib3JkZXI6JzFweCBzb2xpZCAjZTBlMGUwJyB9fT4KICAgICAgICAgIDxkaXYgc3R5bGU9e3sgZGlzcGxheTonZ3JpZCcsIGdyaWRUZW1wbGF0ZUNvbHVtbnM6JzFmciAxZnInLCBnYXA6OCwgZm9udFNpemU6MTIsIGNvbG9yOicjNDQ0JyB9fT4KICAgICAgICAgICAgPGRpdj48c3BhbiBzdHlsZT17eyBjb2xvcjonIzg4OCcsIGZvbnRTaXplOjExIH19PkNPTVBBTlk8L3NwYW4+PGJyIC8+PHN0cm9uZz5FZGdlcnRvbiBUcnVjayAmYW1wOyBUcmFpbGVyIFJlcGFpcjwvc3Ryb25nPjwvZGl2PgogICAgICAgICAgICA8ZGl2PjxzcGFuIHN0eWxlPXt7IGNvbG9yOicjODg4JywgZm9udFNpemU6MTEgfX0+RFJJVkVSPC9zcGFuPjxiciAvPjxzdHJvbmc+e2RyaXZlck5hbWV9PC9zdHJvbmc+PC9kaXY+CiAgICAgICAgICAgIDxkaXY+PHNwYW4gc3R5bGU9e3sgY29sb3I6JyM4ODgnLCBmb250U2l6ZToxMSB9fT5QRVJJT0QgU0hPV048L3NwYW4+PGJyIC8+PHN0cm9uZz57d2luZG93TGFiZWx9PC9zdHJvbmc+PC9kaXY+CiAgICAgICAgICAgIDxkaXY+PHNwYW4gc3R5bGU9e3sgY29sb3I6JyM4ODgnLCBmb250U2l6ZToxMSB9fT5HRU5FUkFURUQ8L3NwYW4+PGJyIC8+PHN0cm9uZz57Z2VuZXJhdGVkfTwvc3Ryb25nPjwvZGl2PgogICAgICAgICAgPC9kaXY+CiAgICAgICAgPC9kaXY+CgogICAgICAgIHsvKiBNSUxFUyBCWSBKVVJJU0RJQ1RJT04gKi99CiAgICAgICAgPGRpdiBzdHlsZT17eyBtYXJnaW5Cb3R0b206MTYgfX0+CiAgICAgICAgICA8ZGl2IHN0eWxlPXt7IGZvbnRTaXplOjEyLCBmb250V2VpZ2h0OjkwMCwgY29sb3I6JyMxYTJhM2EnLCBmb250RmFtaWx5Oid2YXIoLS1mb250LWhlYWQpJywgbGV0dGVyU3BhY2luZzonMC4wOGVtJywgbWFyZ2luQm90dG9tOjYsIHBhZGRpbmdMZWZ0OjQgfX0+TUlMRVMgQlkgSlVSSVNESUNUSU9OPC9kaXY+CiAgICAgICAgICA8ZGl2IHN0eWxlPXt7IGJvcmRlclJhZGl1czo4LCBib3JkZXI6JzFweCBzb2xpZCAjZTBlMGUwJywgb3ZlcmZsb3c6J2hpZGRlbicgfX0+CiAgICAgICAgICAgIDx0YWJsZSBzdHlsZT17eyB3aWR0aDonMTAwJScsIGJvcmRlckNvbGxhcHNlOidjb2xsYXBzZScsIGZvbnRTaXplOjEyIH19PgogICAgICAgICAgICAgIDx0aGVhZD48dHI+CiAgICAgICAgICAgICAgICA8dGggc3R5bGU9e1RIfT5KdXJpc2RpY3Rpb248L3RoPgogICAgICAgICAgICAgICAgPHRoIHN0eWxlPXt7Li4uVEgsdGV4dEFsaWduOidyaWdodCd9fT5Ub3RhbCBNaWxlczwvdGg+CiAgICAgICAgICAgICAgICA8dGggc3R5bGU9e3suLi5USCx0ZXh0QWxpZ246J3JpZ2h0J319PkxvYWRlZDwvdGg+CiAgICAgICAgICAgICAgICA8dGggc3R5bGU9e3suLi5USCx0ZXh0QWxpZ246J3JpZ2h0J319PkRlYWRoZWFkPC90aD4KICAgICAgICAgICAgICA8L3RyPjwvdGhlYWQ+CiAgICAgICAgICAgICAgPHRib2R5PgogICAgICAgICAgICAgICAge2pyb3dzLmZpbHRlcihyID0+IHIubWlsZXMgPiAwKS5tYXAoKHIsIGkpID0+ICgKICAgICAgICAgICAgICAgICAgPHRyIGtleT17ci5zdGF0ZX0gc3R5bGU9e3sgYmFja2dyb3VuZDppJTI9PT0wPycjZmZmJzonI2ZhZmFmYScgfX0+CiAgICAgICAgICAgICAgICAgICAgPHRkIHN0eWxlPXtURH0+PHN0cm9uZz57ci5zdGF0ZX08L3N0cm9uZz48L3RkPgogICAgICAgICAgICAgICAgICAgIDx0ZCBzdHlsZT17ey4uLlREcixmb250V2VpZ2h0OjcwMH19PnttaShyLm1pbGVzKX08L3RkPgogICAgICAgICAgICAgICAgICAgIDx0ZCBzdHlsZT17ey4uLlREcixjb2xvcjonIzJlN2QzMid9fT57bWkoci5sb2FkZWQpfTwvdGQ+CiAgICAgICAgICAgICAgICAgICAgPHRkIHN0eWxlPXt7Li4uVERyLGNvbG9yOicjODg4J319PntyLmRlYWRoZWFkPjA/bWkoci5kZWFkaGVhZCk6Jy0nfTwvdGQ+CiAgICAgICAgICAgICAgICAgIDwvdHI+CiAgICAgICAgICAgICAgICApKX0KICAgICAgICAgICAgICAgIDx0cj4KICAgICAgICAgICAgICAgICAgPHRkIHN0eWxlPXtURn0+VE9UQUw8L3RkPgogICAgICAgICAgICAgICAgICA8dGQgc3R5bGU9e3suLi5URnIsY29sb3I6JyMxYTJhM2EnfX0+e21pKGdyYW5kKX08L3RkPgogICAgICAgICAgICAgICAgICA8dGQgc3R5bGU9e3suLi5URnIsY29sb3I6JyMyZTdkMzInfX0+e21pKGxvYWRlZCl9PC90ZD4KICAgICAgICAgICAgICAgICAgPHRkIHN0eWxlPXt7Li4uVEZyLGNvbG9yOicjNTU1J319PnttaShkZWFkaGVhZCl9PC90ZD4KICAgICAgICAgICAgICAgIDwvdHI+CiAgICAgICAgICAgICAgPC90Ym9keT4KICAgICAgICAgICAgPC90YWJsZT4KICAgICAgICAgIDwvZGl2PgogICAgICAgIDwvZGl2PgoKICAgICAgICB7LyogRlVFTCBCWSBKVVJJU0RJQ1RJT04gKi99CiAgICAgICAgPGRpdiBzdHlsZT17eyBtYXJnaW5Cb3R0b206MTYgfX0+CiAgICAgICAgICA8ZGl2IHN0eWxlPXt7IGZvbnRTaXplOjEyLCBmb250V2VpZ2h0OjkwMCwgY29sb3I6JyMxYTJhM2EnLCBmb250RmFtaWx5Oid2YXIoLS1mb250LWhlYWQpJywgbGV0dGVyU3BhY2luZzonMC4wOGVtJywgbWFyZ2luQm90dG9tOjYsIHBhZGRpbmdMZWZ0OjQgfX0+VEFYQUJMRSBHQUxMT05TIEJZIEpVUklTRElDVElPTjwvZGl2PgogICAgICAgICAgPGRpdiBzdHlsZT17eyBiYWNrZ3JvdW5kOicjZmZmOGUxJywgYm9yZGVyOicxcHggc29saWQgI2ZmZTA4MicsIGJvcmRlclJhZGl1czo4LCBwYWRkaW5nOicxMHB4IDE0cHgnLCBtYXJnaW5Cb3R0b206OCwgZm9udFNpemU6MTEsIGNvbG9yOicjN2E1YzAwJyB9fT4KICAgICAgICAgICAgVGF4YWJsZSBnYWxsb25zIGFyZSB0aGlzIGp1cmlzZGljdGlvbiZhcG9zO3Mgc2hhcmUgb2YgZnVlbCBidXJuZWQgYWNyb3NzIHRoZSBmbGVldCwgY2FydmVkIGJ5IGl0cyBtaWxlIHNoYXJlLiBUYXgtcGFpZCBnYWxsb25zIGFyZSBmbGVldC1jYXJkIGZ1ZWwgYWN0dWFsbHkgcHVyY2hhc2VkIGluIHRoZSBqdXJpc2RpY3Rpb24uIFJlZWZlciBmdWVsIGlzIGV4Y2x1ZGVkLiBUaGUgdGF4IG93ZWQgZWFjaCBqdXJpc2RpY3Rpb24gaXMgdGF4YWJsZSBnYWxsb25zIGxlc3MgdGF4LXBhaWQgZ2FsbG9ucywgYXQgdGhhdCBqdXJpc2RpY3Rpb24mYXBvcztzIHJhdGUuCiAgICAgICAgICA8L2Rpdj4KICAgICAgICAgIDxkaXYgc3R5bGU9e3sgYm9yZGVyUmFkaXVzOjgsIGJvcmRlcjonMXB4IHNvbGlkICNlMGUwZTAnLCBvdmVyZmxvdzonaGlkZGVuJyB9fT4KICAgICAgICAgICAgPHRhYmxlIHN0eWxlPXt7IHdpZHRoOicxMDAlJywgYm9yZGVyQ29sbGFwc2U6J2NvbGxhcHNlJywgZm9udFNpemU6MTIgfX0+CiAgICAgICAgICAgICAgPHRoZWFkPjx0cj4KICAgICAgICAgICAgICAgIDx0aCBzdHlsZT17VEh9Pkp1cmlzZGljdGlvbjwvdGg+CiAgICAgICAgICAgICAgICA8dGggc3R5bGU9e3suLi5USCx0ZXh0QWxpZ246J3JpZ2h0J319PlRheGFibGUgR2FsPC90aD4KICAgICAgICAgICAgICAgIDx0aCBzdHlsZT17ey4uLlRILHRleHRBbGlnbjoncmlnaHQnfX0+VGF4LVBhaWQgR2FsPC90aD4KICAgICAgICAgICAgICAgIDx0aCBzdHlsZT17ey4uLlRILHRleHRBbGlnbjoncmlnaHQnfX0+TmV0IEdhbDwvdGg+CiAgICAgICAgICAgICAgPC90cj48L3RoZWFkPgogICAgICAgICAgICAgIDx0Ym9keT4KICAgICAgICAgICAgICAgIHtqcm93cy5tYXAoKHIsIGkpID0+IHsKICAgICAgICAgICAgICAgICAgY29uc3QgbmV0ID0gKHIudGF4YWJsZSB8fCAwKSAtIChyLnB1cmNoYXNlZCB8fCAwKQogICAgICAgICAgICAgICAgICByZXR1cm4gKAogICAgICAgICAgICAgICAgICAgIDx0ciBrZXk9e3Iuc3RhdGV9IHN0eWxlPXt7IGJhY2tncm91bmQ6aSUyPT09MD8nI2ZmZic6JyNmYWZhZmEnIH19PgogICAgICAgICAgICAgICAgICAgICAgPHRkIHN0eWxlPXtURH0+PHN0cm9uZz57ci5zdGF0ZX08L3N0cm9uZz48L3RkPgogICAgICAgICAgICAgICAgICAgICAgPHRkIHN0eWxlPXtURHJ9PntyLnRheGFibGU9PW51bGw/Jy0nOmdhbChyLnRheGFibGUpfTwvdGQ+CiAgICAgICAgICAgICAgICAgICAgICA8dGQgc3R5bGU9e3suLi5URHIsY29sb3I6JyMyZTdkMzInfX0+e3IucHVyY2hhc2VkPT1udWxsPyctJzpnYWwoci5wdXJjaGFzZWQpfTwvdGQ+CiAgICAgICAgICAgICAgICAgICAgICA8dGQgc3R5bGU9e3suLi5URHIsY29sb3I6bmV0PjA/JyNjNjI4MjgnOihuZXQ8MD8nIzJlN2QzMic6JyM4ODgnKSxmb250V2VpZ2h0OjcwMH19Pnsoci50YXhhYmxlPT1udWxsJiZyLnB1cmNoYXNlZD09bnVsbCk/Jy0nOmdhbChuZXQpfTwvdGQ+CiAgICAgICAgICAgICAgICAgICAgPC90cj4KICAgICAgICAgICAgICAgICAgKQogICAgICAgICAgICAgICAgfSl9CiAgICAgICAgICAgICAgICA8dHI+CiAgICAgICAgICAgICAgICAgIDx0ZCBzdHlsZT17VEZ9PlRPVEFMPC90ZD4KICAgICAgICAgICAgICAgICAgPHRkIHN0eWxlPXtURnJ9PntnYWwodG90VGF4YWJsZSl9PC90ZD4KICAgICAgICAgICAgICAgICAgPHRkIHN0eWxlPXt7Li4uVEZyLGNvbG9yOicjMmU3ZDMyJ319PntnYWwodG90UHVyY2hhc2VkKX08L3RkPgogICAgICAgICAgICAgICAgICA8dGQgc3R5bGU9e3suLi5URnIsY29sb3I6JyMxYTJhM2EnfX0+e2dhbCh0b3RUYXhhYmxlIC0gdG90UHVyY2hhc2VkKX08L3RkPgogICAgICAgICAgICAgICAgPC90cj4KICAgICAgICAgICAgICA8L3Rib2R5PgogICAgICAgICAgICA8L3RhYmxlPgogICAgICAgICAgPC9kaXY+CiAgICAgICAgPC9kaXY+CgogICAgICAgIHsvKiBGTEVFVCBTVU1NQVJZIEJBUiAqL30KICAgICAgICA8ZGl2IHN0eWxlPXt7IG1hcmdpbkJvdHRvbToyNCB9fT4KICAgICAgICAgIDxkaXYgc3R5bGU9e3sgZm9udFNpemU6MTIsIGZvbnRXZWlnaHQ6OTAwLCBjb2xvcjonIzFhMmEzYScsIGZvbnRGYW1pbHk6J3ZhcigtLWZvbnQtaGVhZCknLCBsZXR0ZXJTcGFjaW5nOicwLjA4ZW0nLCBtYXJnaW5Cb3R0b206NiwgcGFkZGluZ0xlZnQ6NCB9fT5GTEVFVCBTVU1NQVJZPC9kaXY+CiAgICAgICAgICA8ZGl2IHN0eWxlPXt7IGJvcmRlclJhZGl1czo4LCBib3JkZXI6JzFweCBzb2xpZCAjZTBlMGUwJywgb3ZlcmZsb3c6J2hpZGRlbicgfX0+CiAgICAgICAgICAgIDx0YWJsZSBzdHlsZT17eyB3aWR0aDonMTAwJScsIGJvcmRlckNvbGxhcHNlOidjb2xsYXBzZScsIGZvbnRTaXplOjEzIH19PgogICAgICAgICAgICAgIDx0Ym9keT4KICAgICAgICAgICAgICAgIDx0cj48dGQgc3R5bGU9e1REfT5Ub3RhbCBNaWxlcyAoYWxsIGp1cmlzZGljdGlvbnMpPC90ZD48dGQgc3R5bGU9e1REcn0+e21pKGdyYW5kKX08L3RkPjwvdHI+CiAgICAgICAgICAgICAgICA8dHIgc3R5bGU9e3tiYWNrZ3JvdW5kOicjZmFmYWZhJ319Pjx0ZCBzdHlsZT17VER9PlRvdGFsIEdhbGxvbnMgUHVyY2hhc2VkIChmbGVldCBjYXJkLCByZWVmZXIgZXhjbHVkZWQpPC90ZD48dGQgc3R5bGU9e1REcn0+e2dhbCh0b3RhbEdhbCl9PC90ZD48L3RyPgogICAgICAgICAgICAgICAgPHRyIHN0eWxlPXt7YmFja2dyb3VuZDonIzFhMmEzYSd9fT4KICAgICAgICAgICAgICAgICAgPHRkIHN0eWxlPXt7IHBhZGRpbmc6JzE0cHggMTJweCcsIGZvbnRTaXplOjE1LCBmb250V2VpZ2h0OjkwMCwgY29sb3I6JyNmZmYnLCBmb250RmFtaWx5Oid2YXIoLS1mb250LWhlYWQpJywgbGV0dGVyU3BhY2luZzonMC4wNGVtJyB9fT5GTEVFVCBNSUxFUyBQRVIgR0FMTE9OPC90ZD4KICAgICAgICAgICAgICAgICAgPHRkIHN0eWxlPXt7IHBhZGRpbmc6JzE0cHggMTJweCcsIHRleHRBbGlnbjoncmlnaHQnLCBmb250U2l6ZToyMCwgZm9udFdlaWdodDo5MDAsIGNvbG9yOicjZmZkNTRmJywgZm9udEZhbWlseTondmFyKC0tZm9udC1oZWFkKScgfX0+e2ZsZWV0TXBnID4gMCA/IGZsZWV0TXBnLnRvRml4ZWQoMikgOiAnLSd9PC90ZD4KICAgICAgICAgICAgICAgIDwvdHI+CiAgICAgICAgICAgICAgPC90Ym9keT4KICAgICAgICAgICAgPC90YWJsZT4KICAgICAgICAgIDwvZGl2PgogICAgICAgIDwvZGl2PgoKICAgICAgICB7LyogSVZEUiDigJQgU1RBVEUtTElORSBPRE9NRVRFUiBSRUNPUkRTICovfQogICAgICAgIHtzZWdtZW50cy5sZW5ndGggPiAwICYmICgKICAgICAgICAgIDxkaXYgc3R5bGU9e3sgbWFyZ2luQm90dG9tOjI0IH19PgogICAgICAgICAgICA8ZGl2IHN0eWxlPXt7IGZvbnRTaXplOjEyLCBmb250V2VpZ2h0OjkwMCwgY29sb3I6JyMxYTJhM2EnLCBmb250RmFtaWx5Oid2YXIoLS1mb250LWhlYWQpJywgbGV0dGVyU3BhY2luZzonMC4wOGVtJywgbWFyZ2luQm90dG9tOjYsIHBhZGRpbmdMZWZ0OjQgfX0+SVZEUiDigJQgU1RBVEUtTElORSBPRE9NRVRFUjwvZGl2PgogICAgICAgICAgICA8ZGl2IHN0eWxlPXt7IGJhY2tncm91bmQ6JyNmZmY4ZTEnLCBib3JkZXI6JzFweCBzb2xpZCAjZmZlMDgyJywgYm9yZGVyUmFkaXVzOjgsIHBhZGRpbmc6JzEwcHggMTRweCcsIG1hcmdpbkJvdHRvbTo4LCBmb250U2l6ZToxMSwgY29sb3I6JyM3YTVjMDAnIH19PgogICAgICAgICAgICAgIE9uZSByb3cgcGVyIHN0YXRlIGNyb3NzaW5nIGluIHRyYXZlbCBvcmRlci4gVGhlIHJlYWRpbmcgdGhhdCBjbG9zZXMgb25lIGp1cmlzZGljdGlvbiBvcGVucyB0aGUgbmV4dCwgc28gdGhlIG9kb21ldGVyIGNoYWluIGlzIGNvbnRpbnVvdXMgYW5kIHRoZSBtaWxlcyByZWNvbmNpbGUgdG8gdGhlIGp1cmlzZGljdGlvbiB0b3RhbHMgYWJvdmUgdG8gdGhlIHRlbnRoIG9mIGEgbWlsZS4KICAgICAgICAgICAgPC9kaXY+CiAgICAgICAgICAgIDxkaXYgc3R5bGU9e3sgYm9yZGVyUmFkaXVzOjgsIGJvcmRlcjonMXB4IHNvbGlkICNlMGUwZTAnLCBvdmVyZmxvdzonaGlkZGVuJyB9fT4KICAgICAgICAgICAgICA8dGFibGUgc3R5bGU9e3sgd2lkdGg6JzEwMCUnLCBib3JkZXJDb2xsYXBzZTonY29sbGFwc2UnLCBmb250U2l6ZToxMiB9fT4KICAgICAgICAgICAgICAgIDx0aGVhZD48dHI+CiAgICAgICAgICAgICAgICAgIDx0aCBzdHlsZT17VEh9PkRhdGU8L3RoPgogICAgICAgICAgICAgICAgICA8dGggc3R5bGU9e1RIfT5TdGF0ZTwvdGg+CiAgICAgICAgICAgICAgICAgIDx0aCBzdHlsZT17ey4uLlRILHRleHRBbGlnbjoncmlnaHQnfX0+T2RvbWV0ZXIgU3RhcnQ8L3RoPgogICAgICAgICAgICAgICAgICA8dGggc3R5bGU9e3suLi5USCx0ZXh0QWxpZ246J3JpZ2h0J319Pk9kb21ldGVyIEVuZDwvdGg+CiAgICAgICAgICAgICAgICAgIDx0aCBzdHlsZT17ey4uLlRILHRleHRBbGlnbjoncmlnaHQnfX0+TWlsZXM8L3RoPgogICAgICAgICAgICAgICAgPC90cj48L3RoZWFkPgogICAgICAgICAgICAgICAgPHRib2R5PgogICAgICAgICAgICAgICAgICB7c2VnbWVudHMubWFwKChzLCBpKSA9PiAoCiAgICAgICAgICAgICAgICAgICAgPHRyIGtleT17aX0gc3R5bGU9e3sgYmFja2dyb3VuZDppJTI9PT0wPycjZmZmJzonI2ZhZmFmYScsIG9wYWNpdHk6IHMubGVnX3R5cGU9PT0nZGVhZGhlYWQnPzAuNzI6MSB9fT4KICAgICAgICAgICAgICAgICAgICAgIDx0ZCBzdHlsZT17VER9Pnsocy5kYXRlIHx8ICcnKS5zbGljZSgwLCAxMCl9PC90ZD4KICAgICAgICAgICAgICAgICAgICAgIDx0ZCBzdHlsZT17VER9PjxzdHJvbmcgc3R5bGU9e3sgY29sb3I6IHMubGVnX3R5cGU9PT0nZGVhZGhlYWQnPycjODg4JzonIzIyMicgfX0+e3Muc3RhdGV9PC9zdHJvbmc+PC90ZD4KICAgICAgICAgICAgICAgICAgICAgIDx0ZCBzdHlsZT17ey4uLlREcixjb2xvcjonIzY2Nid9fT57TWF0aC5yb3VuZChzLm9kb19zdGFydCkudG9Mb2NhbGVTdHJpbmcoJ2VuLVVTJyl9PC90ZD4KICAgICAgICAgICAgICAgICAgICAgIDx0ZCBzdHlsZT17ey4uLlREcn19PntNYXRoLnJvdW5kKHMub2RvX2VuZCkudG9Mb2NhbGVTdHJpbmcoJ2VuLVVTJyl9PC90ZD4KICAgICAgICAgICAgICAgICAgICAgIDx0ZCBzdHlsZT17ey4uLlREcixjb2xvcjonI2M2MjgyOCcsZm9udFdlaWdodDo3MDB9fT57bWkocy5taWxlcyl9PC90ZD4KICAgICAgICAgICAgICAgICAgICA8L3RyPgogICAgICAgICAgICAgICAgICApKX0KICAgICAgICAgICAgICAgIDwvdGJvZHk+CiAgICAgICAgICAgICAgPC90YWJsZT4KICAgICAgICAgICAgPC9kaXY+CiAgICAgICAgICA8L2Rpdj4KICAgICAgICApfQoKICAgICAgICA8ZGl2IHN0eWxlPXt7IHRleHRBbGlnbjonY2VudGVyJywgZm9udFNpemU6MTAsIGNvbG9yOicjYWFhJywgcGFkZGluZ0JvdHRvbTozMiB9fT5HZW5lcmF0ZWQgYnkgTG9hZCBMZWRnZXIg4oCUIGRiYXBwc3lzdGVtcy5jb208L2Rpdj4KICAgICAgPC9kaXY+CiAgICA8L2Rpdj4KICApCn0KCi8vIC0tIEJVVFRPTiArIExPQURFUiAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KLy8gRHJvcC1pbjogPElmdGFSZXBvcnQgZHJpdmVyPXtkcml2ZXJ9IHF0cj17cXRyfSB5ZWFyPXt5ZWFyfSAvPgovLyBxdHIveWVhciBhcmUgb3B0aW9uYWw7IGRlZmF1bHRzIHRvIHRoZSBjdXJyZW50IHF1YXJ0ZXIuCmV4cG9ydCBkZWZhdWx0IGZ1bmN0aW9uIElmdGFSZXBvcnQoeyBkcml2ZXIsIHF0cjogcXRyUHJvcCwgeWVhcjogeWVhclByb3AgfSkgewogIGNvbnN0IHsgY29sb3JGb3IgfSA9IHVzZURyaXZlcnMoKQogIGNvbnN0IGhlYWRlckNvbG9yID0gY29sb3JGb3IoZHJpdmVyKQogIGNvbnN0IG5vdyA9IG5ldyBEYXRlKCkKICBjb25zdCBxdHIgID0gcXRyUHJvcCAgIT0gbnVsbCA/IHF0clByb3AgIDogKE1hdGguZmxvb3Iobm93LmdldE1vbnRoKCkgLyAzKSArIDEpCiAgY29uc3QgeWVhciA9IHllYXJQcm9wICE9IG51bGwgPyB5ZWFyUHJvcCA6IG5vdy5nZXRGdWxsWWVhcigpCgogIGNvbnN0IFtvcGVuLCAgICBzZXRPcGVuXSAgICA9IHVzZVN0YXRlKGZhbHNlKQogIGNvbnN0IFtkYXRhLCAgICBzZXREYXRhXSAgICA9IHVzZVN0YXRlKG51bGwpCiAgY29uc3QgW2xvYWRpbmcsIHNldExvYWRpbmddID0gdXNlU3RhdGUoZmFsc2UpCiAgY29uc3QgW2Vycm9yLCAgIHNldEVycm9yXSAgID0gdXNlU3RhdGUoJycpCgogIGFzeW5jIGZ1bmN0aW9uIG9wZW5SZXBvcnQoKSB7CiAgICBpZiAoIWRyaXZlcikgcmV0dXJuCiAgICBzZXRMb2FkaW5nKHRydWUpCiAgICBzZXRFcnJvcignJykKICAgIHRyeSB7CiAgICAgIGNvbnN0IHFzID0gcXRyID49IDEgPyAoJz9xPScgKyBxdHIgKyAnJnllYXI9JyArIHllYXIpIDogJycKICAgICAgY29uc3QganNvbiA9IGF3YWl0IGFwaUNsaWVudCgnL2FwaS9pZnRhLycgKyBlbmNvZGVVUklDb21wb25lbnQoZHJpdmVyKSArIHFzKQogICAgICBzZXREYXRhKGpzb24gJiYgQXJyYXkuaXNBcnJheShqc29uLnN0YXRlcykgPyBqc29uIDogeyBzdGF0ZXM6IFtdLCBncmFuZF90b3RhbF9taWxlczogMCB9KQogICAgICBzZXRPcGVuKHRydWUpCiAgICB9IGNhdGNoIChlcnIpIHsKICAgICAgc2V0RXJyb3IoKGVyci5tZXNzYWdlIHx8ICdGYWlsZWQgdG8gbG9hZCBJRlRBIHN0YXRlbWVudCcpLnNsaWNlKDAsIDgwKSkKICAgIH0gZmluYWxseSB7CiAgICAgIHNldExvYWRpbmcoZmFsc2UpCiAgICB9CiAgfQoKICByZXR1cm4gKAogICAgPD4KICAgICAgPGJ1dHRvbgogICAgICAgIGNsYXNzTmFtZT0ic2Nhbi1idG4iCiAgICAgICAgc3R5bGU9e3sgd2lkdGg6JzEwMCUnLCBwYWRkaW5nOicxMnB4JywgZm9udFNpemU6MTMgfX0KICAgICAgICBkaXNhYmxlZD17bG9hZGluZyB8fCAhZHJpdmVyfQogICAgICAgIG9uQ2xpY2s9e29wZW5SZXBvcnR9CiAgICAgID4KICAgICAgICB7bG9hZGluZyA/ICcuLi4nIDogJ0lGVEEgU1RBVEVNRU5UJ30KICAgICAgPC9idXR0b24+CiAgICAgIHtlcnJvciAmJiA8ZGl2IHN0eWxlPXt7IGZvbnRTaXplOjExLCBjb2xvcjonI2U1MzkzNScsIG1hcmdpblRvcDo4IH19PuKaoO+4jyB7ZXJyb3J9PC9kaXY+fQogICAgICB7b3BlbiAmJiBkYXRhICYmICgKICAgICAgICA8SWZ0YVN0YXRlbWVudE92ZXJsYXkKICAgICAgICAgIGRhdGE9e2RhdGF9CiAgICAgICAgICBkcml2ZXJOYW1lPXsoZHJpdmVyIHx8ICcnKS50b1VwcGVyQ2FzZSgpfQogICAgICAgICAgaGVhZGVyQ29sb3I9e2hlYWRlckNvbG9yfQogICAgICAgICAgcXRyPXtxdHJ9CiAgICAgICAgICB5ZWFyPXt5ZWFyfQogICAgICAgICAgb25DbG9zZT17KCkgPT4gc2V0T3BlbihmYWxzZSl9CiAgICAgICAgLz4KICAgICAgKX0KICAgIDwvPgogICkKfQo=
+// src/IftaReport.jsx
+// (c) dbappsystems.com | daddyboyapps.com
+// Load Ledger V5 — IFTA STATEMENT (printable)
+//
+// A full-screen, print-ready IFTA jurisdiction statement that matches the
+// Settlement Statement's look and feel token-for-token (StatementOverlay in
+// SettlementReport.jsx): dark navy header bar, COMPANY/DRIVER info card,
+// TH/TD/TF table styles, amber note boxes, dark total bars, footer line.
+//
+// DATA: this reads the SAME payload the IFTA card fetches —
+//   GET /api/ifta/{driver}?q={1..4}&year={YYYY}
+// and binds only real fields the Worker returns:
+//   states[]  { state, miles, loaded, deadhead, est_gallons }
+//   grand_total_miles, total_gallons, fleet_mpg
+//   purchased_gallons_by_state  { ST: gallons }
+//   segments[]  { date, state, odo_start, odo_end, miles, leg_type, load_id }
+// Nothing is fabricated. Jurisdictions with purchased gallons but no miles are
+// still listed so tax-paid gallons always reconcile to gallons purchased.
+//
+// The word "estimated" appears nowhere by design: drivers audit and correct
+// these figures before this statement is printed for filing.
+
+import { useState } from 'react'
+import { api as apiClient } from './api.js'
+import { useDrivers } from './useDrivers.js'
+
+const QLABEL = ['Jan 1 - Mar 31', 'Apr 1 - Jun 30', 'Jul 1 - Sep 30', 'Oct 1 - Dec 31']
+
+// One decimal, thousands-separated (matches the ledger's r1() precision).
+function mi(n) {
+  return (Math.round((n || 0) * 10) / 10)
+    .toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+}
+function gal(n) {
+  if (n == null) return '-'
+  return (Math.round((n || 0) * 1000) / 1000)
+    .toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
+}
+
+// -- FULL IFTA STATEMENT OVERLAY ---------------------------------------
+function IftaStatementOverlay({ data, driverName, headerColor, qtr, year, onClose }) {
+  const TH  = { background:'#1a2a3a', color:'#fff', padding:'8px 10px', fontSize:11, fontWeight:700, textAlign:'left', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }
+  const TD  = { padding:'8px 10px', fontSize:12, borderBottom:'1px solid #e8e8e8', color:'#222', verticalAlign:'middle' }
+  const TDr = { ...TD, textAlign:'right', fontFamily:'var(--font-head)', fontWeight:600 }
+  const TF  = { ...TD, background:'#f0f0f0', fontWeight:700, color:'#111' }
+  const TFr = { ...TF, textAlign:'right', fontFamily:'var(--font-head)' }
+
+  const states   = (data && data.states) || []
+  const grand    = (data && data.grand_total_miles) || 0
+  const loaded   = states.reduce((s, r) => s + (r.loaded   || 0), 0)
+  const deadhead = states.reduce((s, r) => s + (r.deadhead || 0), 0)
+  const totalGal = (data && data.total_gallons) || 0
+  const fleetMpg = (data && data.fleet_mpg) || 0
+  const purch    = (data && data.purchased_gallons_by_state) || null
+  const segments = (data && Array.isArray(data.segments)) ? data.segments : []
+
+  const periodLabel = qtr >= 1 ? ('Q' + qtr + ' ' + year) : 'All Recorded'
+  const windowLabel = qtr >= 1 ? (QLABEL[qtr - 1] + ' ' + year) : 'All recorded activity'
+  const generated   = new Date().toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' })
+
+  // Jurisdiction rows: every state with miles, plus any state that only has
+  // purchased gallons (so tax-paid gallons reconcile to gallons purchased).
+  const jset = {}
+  for (const r of states) jset[r.state] = { state:r.state, miles:r.miles||0, loaded:r.loaded||0, deadhead:r.deadhead||0, taxable:r.est_gallons, purchased:(purch && purch[r.state]!=null)?purch[r.state]:null }
+  if (purch) {
+    for (const st of Object.keys(purch)) {
+      if (!jset[st]) jset[st] = { state:st, miles:0, loaded:0, deadhead:0, taxable:null, purchased:purch[st] }
+    }
+  }
+  const jrows = Object.values(jset).sort((a, b) => b.miles - a.miles)
+
+  const totTaxable   = jrows.reduce((s, r) => s + (r.taxable   || 0), 0)
+  const totPurchased = jrows.reduce((s, r) => s + (r.purchased || 0), 0)
+
+  return (
+    <div style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'#fff', zIndex:9999, overflowY:'auto', WebkitOverflowScrolling:'touch' }}>
+      <div style={{ position:'sticky', top:0, background:'#1a2a3a', padding:'12px 16px', display:'flex', alignItems:'center', justifyContent:'space-between', zIndex:10 }}>
+        <div>
+          <div style={{ fontSize:11, color:'rgba(255,255,255,0.6)', fontFamily:'var(--font-head)', letterSpacing:'0.08em' }}>IFTA STATEMENT</div>
+          <div style={{ fontSize:16, fontFamily:'var(--font-head)', fontWeight:900, color: headerColor || '#64b5f6' }}>{driverName}</div>
+          <div style={{ fontSize:10, color:'rgba(255,255,255,0.5)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginTop:2 }}>PERIOD ACTIVITY: {periodLabel}</div>
+        </div>
+        <button onClick={onClose} style={{ background:'rgba(255,255,255,0.15)', border:'none', color:'#fff', borderRadius:8, padding:'8px 16px', fontSize:14, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>X CLOSE</button>
+      </div>
+      <div style={{ padding:'16px', maxWidth:600, margin:'0 auto' }}>
+
+        {/* INFO CARD */}
+        <div style={{ background:'#f8f8f8', borderRadius:8, padding:'12px 14px', marginBottom:16, border:'1px solid #e0e0e0' }}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, fontSize:12, color:'#444' }}>
+            <div><span style={{ color:'#888', fontSize:11 }}>COMPANY</span><br /><strong>Edgerton Truck &amp; Trailer Repair</strong></div>
+            <div><span style={{ color:'#888', fontSize:11 }}>DRIVER</span><br /><strong>{driverName}</strong></div>
+            <div><span style={{ color:'#888', fontSize:11 }}>PERIOD SHOWN</span><br /><strong>{windowLabel}</strong></div>
+            <div><span style={{ color:'#888', fontSize:11 }}>GENERATED</span><br /><strong>{generated}</strong></div>
+          </div>
+        </div>
+
+        {/* MILES BY JURISDICTION */}
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>MILES BY JURISDICTION</div>
+          <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+              <thead><tr>
+                <th style={TH}>Jurisdiction</th>
+                <th style={{...TH,textAlign:'right'}}>Total Miles</th>
+                <th style={{...TH,textAlign:'right'}}>Loaded</th>
+                <th style={{...TH,textAlign:'right'}}>Deadhead</th>
+              </tr></thead>
+              <tbody>
+                {jrows.filter(r => r.miles > 0).map((r, i) => (
+                  <tr key={r.state} style={{ background:i%2===0?'#fff':'#fafafa' }}>
+                    <td style={TD}><strong>{r.state}</strong></td>
+                    <td style={{...TDr,fontWeight:700}}>{mi(r.miles)}</td>
+                    <td style={{...TDr,color:'#2e7d32'}}>{mi(r.loaded)}</td>
+                    <td style={{...TDr,color:'#888'}}>{r.deadhead>0?mi(r.deadhead):'-'}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td style={TF}>TOTAL</td>
+                  <td style={{...TFr,color:'#1a2a3a'}}>{mi(grand)}</td>
+                  <td style={{...TFr,color:'#2e7d32'}}>{mi(loaded)}</td>
+                  <td style={{...TFr,color:'#555'}}>{mi(deadhead)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* FUEL BY JURISDICTION */}
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>TAXABLE GALLONS BY JURISDICTION</div>
+          <div style={{ background:'#fff8e1', border:'1px solid #ffe082', borderRadius:8, padding:'10px 14px', marginBottom:8, fontSize:11, color:'#7a5c00' }}>
+            Taxable gallons are this jurisdiction&apos;s share of fuel burned across the fleet, carved by its mile share. Tax-paid gallons are fleet-card fuel actually purchased in the jurisdiction. Reefer fuel is excluded. The tax owed each jurisdiction is taxable gallons less tax-paid gallons, at that jurisdiction&apos;s rate.
+          </div>
+          <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+              <thead><tr>
+                <th style={TH}>Jurisdiction</th>
+                <th style={{...TH,textAlign:'right'}}>Taxable Gal</th>
+                <th style={{...TH,textAlign:'right'}}>Tax-Paid Gal</th>
+                <th style={{...TH,textAlign:'right'}}>Net Gal</th>
+              </tr></thead>
+              <tbody>
+                {jrows.map((r, i) => {
+                  const net = (r.taxable || 0) - (r.purchased || 0)
+                  return (
+                    <tr key={r.state} style={{ background:i%2===0?'#fff':'#fafafa' }}>
+                      <td style={TD}><strong>{r.state}</strong></td>
+                      <td style={TDr}>{r.taxable==null?'-':gal(r.taxable)}</td>
+                      <td style={{...TDr,color:'#2e7d32'}}>{r.purchased==null?'-':gal(r.purchased)}</td>
+                      <td style={{...TDr,color:net>0?'#c62828':(net<0?'#2e7d32':'#888'),fontWeight:700}}>{(r.taxable==null&&r.purchased==null)?'-':gal(net)}</td>
+                    </tr>
+                  )
+                })}
+                <tr>
+                  <td style={TF}>TOTAL</td>
+                  <td style={TFr}>{gal(totTaxable)}</td>
+                  <td style={{...TFr,color:'#2e7d32'}}>{gal(totPurchased)}</td>
+                  <td style={{...TFr,color:'#1a2a3a'}}>{gal(totTaxable - totPurchased)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* FLEET SUMMARY BAR */}
+        <div style={{ marginBottom:24 }}>
+          <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>FLEET SUMMARY</div>
+          <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
+              <tbody>
+                <tr><td style={TD}>Total Miles (all jurisdictions)</td><td style={TDr}>{mi(grand)}</td></tr>
+                <tr style={{background:'#fafafa'}}><td style={TD}>Total Gallons Purchased (fleet card, reefer excluded)</td><td style={TDr}>{gal(totalGal)}</td></tr>
+                <tr style={{background:'#1a2a3a'}}>
+                  <td style={{ padding:'14px 12px', fontSize:15, fontWeight:900, color:'#fff', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }}>FLEET MILES PER GALLON</td>
+                  <td style={{ padding:'14px 12px', textAlign:'right', fontSize:20, fontWeight:900, color:'#ffd54f', fontFamily:'var(--font-head)' }}>{fleetMpg > 0 ? fleetMpg.toFixed(2) : '-'}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* IVDR — STATE-LINE ODOMETER RECORDS */}
+        {segments.length > 0 && (
+          <div style={{ marginBottom:24 }}>
+            <div style={{ fontSize:12, fontWeight:900, color:'#1a2a3a', fontFamily:'var(--font-head)', letterSpacing:'0.08em', marginBottom:6, paddingLeft:4 }}>IVDR — STATE-LINE ODOMETER</div>
+            <div style={{ background:'#fff8e1', border:'1px solid #ffe082', borderRadius:8, padding:'10px 14px', marginBottom:8, fontSize:11, color:'#7a5c00' }}>
+              One row per state crossing in travel order. The reading that closes one jurisdiction opens the next, so the odometer chain is continuous and the miles reconcile to the jurisdiction totals above to the tenth of a mile.
+            </div>
+            <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                <thead><tr>
+                  <th style={TH}>Date</th>
+                  <th style={TH}>State</th>
+                  <th style={{...TH,textAlign:'right'}}>Odometer Start</th>
+                  <th style={{...TH,textAlign:'right'}}>Odometer End</th>
+                  <th style={{...TH,textAlign:'right'}}>Miles</th>
+                </tr></thead>
+                <tbody>
+                  {segments.map((s, i) => (
+                    <tr key={i} style={{ background:i%2===0?'#fff':'#fafafa', opacity: s.leg_type==='deadhead'?0.72:1 }}>
+                      <td style={TD}>{(s.date || '').slice(0, 10)}</td>
+                      <td style={TD}><strong style={{ color: s.leg_type==='deadhead'?'#888':'#222' }}>{s.state}</strong></td>
+                      <td style={{...TDr,color:'#666'}}>{Math.round(s.odo_start).toLocaleString('en-US')}</td>
+                      <td style={{...TDr}}>{Math.round(s.odo_end).toLocaleString('en-US')}</td>
+                      <td style={{...TDr,color:'#c62828',fontWeight:700}}>{mi(s.miles)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        <div style={{ textAlign:'center', fontSize:10, color:'#aaa', paddingBottom:32 }}>Generated by Load Ledger — dbappsystems.com</div>
+      </div>
+    </div>
+  )
+}
+
+// -- BUTTON + LOADER ---------------------------------------------------
+// Drop-in: <IftaReport driver={driver} qtr={qtr} year={year} />
+// qtr/year are optional; defaults to the current quarter.
+export default function IftaReport({ driver, qtr: qtrProp, year: yearProp }) {
+  const { colorFor } = useDrivers()
+  const headerColor = colorFor(driver)
+  const now = new Date()
+  const qtr  = qtrProp  != null ? qtrProp  : (Math.floor(now.getMonth() / 3) + 1)
+  const year = yearProp != null ? yearProp : now.getFullYear()
+
+  const [open,    setOpen]    = useState(false)
+  const [data,    setData]    = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error,   setError]   = useState('')
+
+  async function openReport() {
+    if (!driver) return
+    setLoading(true)
+    setError('')
+    try {
+      const qs = qtr >= 1 ? ('?q=' + qtr + '&year=' + year) : ''
+      const json = await apiClient('/api/ifta/' + encodeURIComponent(driver) + qs)
+      setData(json && Array.isArray(json.states) ? json : { states: [], grand_total_miles: 0 })
+      setOpen(true)
+    } catch (err) {
+      setError((err.message || 'Failed to load IFTA statement').slice(0, 80))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <>
+      <button
+        className="scan-btn"
+        style={{ width:'100%', padding:'12px', fontSize:13 }}
+        disabled={loading || !driver}
+        onClick={openReport}
+      >
+        {loading ? '...' : 'IFTA STATEMENT'}
+      </button>
+      {error && <div style={{ fontSize:11, color:'#e53935', marginTop:8 }}>⚠️ {error}</div>}
+      {open && data && (
+        <IftaStatementOverlay
+          data={data}
+          driverName={(driver || '').toUpperCase()}
+          headerColor={headerColor}
+          qtr={qtr}
+          year={year}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  )
+}
