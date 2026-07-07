@@ -603,10 +603,12 @@ export default function App() {
 
       </div>
 
-      {/* LIVE state-line odometer log — floating button on the Loads front
-          page (driver only, list view). Logs the driver's own odometer at each
-          state line as the FACT record beside the routed IFTA estimate. */}
-      {!isBookkeeper && tab === 'loads' && loadsSubView === 'list' && (
+      {/* LIVE state-line odometer log — floating button on the Loads pages:
+          the driver's sign-in landing page (rate con scan) AND the loads list.
+          Logs the driver's own odometer at each state line as the FACT record
+          beside the routed IFTA estimate. Hidden inside invoice + queue flows
+          so it never covers their action buttons. */}
+      {!isBookkeeper && tab === 'loads' && (loadsSubView === 'list' || loadsSubView === 'ratecon') && (
         <IftaDailyLog driver={activeDriver} showToast={showToast} />
       )}
 
