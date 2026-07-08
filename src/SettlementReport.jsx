@@ -316,6 +316,91 @@ function toBase64(file) {
 // -- FULL STATEMENT OVERLAY --------------------------------------------
 function StatementOverlay({ data, driverName, headerColor, onClose }) {
   const d = data
+  const statementBodyRef = useRef(null)
+  const [pdfBusy, setPdfBusy] = useState(false)
+
+  // Load a script from cdnjs on demand (cached after first load).
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      if (document.querySelector('script[data-ll="' + src + '"]')) return resolve()
+      const s = document.createElement('script')
+      s.src = src
+      s.async = true
+      s.setAttribute('data-ll', src)
+      s.onload = () => resolve()
+      s.onerror = () => reject(new Error('Failed to load ' + src))
+      document.head.appendChild(s)
+    })
+  }
+
+  async function downloadStatementPdf() {
+    if (pdfBusy) return
+    setPdfBusy(true)
+    try {
+      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js')
+      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js')
+      const html2canvas = window.html2canvas
+      const jsPDF = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF
+      const node = statementBodyRef.current
+      if (!node || !html2canvas || !jsPDF) throw new Error('PDF tools unavailable')
+
+      const canvas = await html2canvas(node, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        windowWidth: node.scrollWidth,
+        windowHeight: node.scrollHeight,
+      })
+
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' })
+      const pageW = pdf.internal.pageSize.getWidth()
+      const pageH = pdf.internal.pageSize.getHeight()
+      const margin = 24
+      const imgW = pageW - margin * 2
+      const imgH = (canvas.height * imgW) / canvas.width
+
+      const imgData = canvas.toDataURL('image/png')
+      let heightLeft = imgH
+      let position = margin
+      pdf.addImage(imgData, 'PNG', margin, position, imgW, imgH)
+      heightLeft -= (pageH - margin * 2)
+      while (heightLeft > 0) {
+        position = margin - (imgH - heightLeft)
+        pdf.addPage()
+        pdf.addImage(imgData, 'PNG', margin, position, imgW, imgH)
+        heightLeft -= (pageH - margin * 2)
+      }
+
+      const safeName = String(driverName || 'driver').replace(/[^a-z0-9]+/gi, '_')
+      const fileName = 'settlement_' + safeName + '_' + (d.periodLabel || '').replace(/[^a-z0-9]+/gi, '_') + '.pdf'
+
+      const blob = pdf.output('blob')
+      const file = new File([blob], fileName, { type: 'application/pdf' })
+      // iPhone: use the native share sheet when available (Save to Files, Print, AirDrop).
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: fileName })
+          return
+        } catch (shareErr) {
+          if (shareErr && shareErr.name === 'AbortError') return
+          // fall through to download
+        }
+      }
+      // Desktop / fallback: trigger a normal download.
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 4000)
+    } catch (err) {
+      alert('Could not generate PDF: ' + (err && err.message ? err.message : 'unknown error'))
+    } finally {
+      setPdfBusy(false)
+    }
+  }
   const TH  = { background:'#1a2a3a', color:'#fff', padding:'8px 10px', fontSize:11, fontWeight:700, textAlign:'left', fontFamily:'var(--font-head)', letterSpacing:'0.04em' }
   const TD  = { padding:'8px 10px', fontSize:12, borderBottom:'1px solid #e8e8e8', color:'#222', verticalAlign:'middle' }
   const TDr = { ...TD, textAlign:'right', fontFamily:'var(--font-head)', fontWeight:600 }
@@ -329,9 +414,12 @@ function StatementOverlay({ data, driverName, headerColor, onClose }) {
           <div style={{ fontSize:16, fontFamily:'var(--font-head)', fontWeight:900, color: headerColor || '#64b5f6' }}>{driverName}</div>
           <div style={{ fontSize:10, color:'rgba(255,255,255,0.5)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', marginTop:2 }}>PERIOD ACTIVITY: {d.periodLabel}</div>
         </div>
-        <button onClick={onClose} style={{ background:'rgba(255,255,255,0.15)', border:'none', color:'#fff', borderRadius:8, padding:'8px 16px', fontSize:14, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>X CLOSE</button>
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          <button onClick={downloadStatementPdf} disabled={pdfBusy} style={{ background: pdfBusy ? 'rgba(255,255,255,0.1)' : '#2e7d32', border:'none', color:'#fff', borderRadius:8, padding:'8px 16px', fontSize:14, fontFamily:'var(--font-head)', fontWeight:700, cursor: pdfBusy ? 'default' : 'pointer', opacity: pdfBusy ? 0.7 : 1 }}>{pdfBusy ? 'BUILDING…' : 'DOWNLOAD PDF'}</button>
+          <button onClick={onClose} style={{ background:'rgba(255,255,255,0.15)', border:'none', color:'#fff', borderRadius:8, padding:'8px 16px', fontSize:14, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>X CLOSE</button>
+        </div>
       </div>
-      <div style={{ padding:'16px', maxWidth:600, margin:'0 auto' }}>
+      <div ref={statementBodyRef} style={{ padding:'16px', maxWidth:600, margin:'0 auto', background:'#fff' }}>
         <div style={{ background:'#f8f8f8', borderRadius:8, padding:'12px 14px', marginBottom:16, border:'1px solid #e0e0e0' }}>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, fontSize:12, color:'#444' }}>
             <div><span style={{ color:'#888', fontSize:11 }}>COMPANY</span><br /><strong>Edgerton Truck &amp; Trailer Repair</strong></div>
