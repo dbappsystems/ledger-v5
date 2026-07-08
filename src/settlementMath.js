@@ -207,7 +207,7 @@ export function recurringChargesForWeek(recurringCharges, driverName, weekPayDat
 // not part of the all-time "still owed to the company" load/fuel/advance balance.
 // Keeping them out of computeRunningBalance keeps that number byte-identical to
 // v4 and avoids double-counting a weekly deduction against the lifetime balance.
-export function computeRunningBalance({ loads, fuelEntries, escrowTotal, driver, ownerCutPct = DEFAULT_OWNER_CUT, carrierAdvances = [] }) {
+export function computeRunningBalance({ loads, fuelEntries, escrowTotal, driver, ownerCutPct = DEFAULT_OWNER_CUT, carrierAdvances = [], settlementPaymentsTotal = 0 }) {
   const cut    = normalizeOwnerCut(ownerCutPct)
   const dn     = driver
   const dLoads = (Array.isArray(loads) ? loads : []).filter(l => l.driver === dn)
@@ -219,10 +219,14 @@ export function computeRunningBalance({ loads, fuelEntries, escrowTotal, driver,
   const allAchDisbursed  = dLoads.filter(l => l.ach_payment).reduce((s,l) => s+(parseFloat(l.ach_received)||0), 0)
   const allEscrow        = parseFloat(escrowTotal) || 0
   const allCarrierAdvance = carrierAdvanceOwed(carrierAdvances)
-  const stillOwedRaw     = allGrossPay - allAdvKept + allReimb - allFleetFuel - allAchDisbursed - allEscrow - allCarrierAdvance
+  // Cash/check paid directly to the driver (settlement_payments rows). Counted
+  // ONCE here; general carrier advances are already counted in allCarrierAdvance.
+  // The FIFO view (settlementFifo.js) reads the SAME rows for display only.
+  const allSettlementPayments = parseFloat(settlementPaymentsTotal) || 0
+  const stillOwedRaw     = allGrossPay - allAdvKept + allReimb - allFleetFuel - allAchDisbursed - allEscrow - allCarrierAdvance - allSettlementPayments
   return {
     allGrossPay, allAdvKept, allReimb, allFleetFuel, allAchDisbursed, allEscrow,
-    allCarrierAdvance,
+    allCarrierAdvance, allSettlementPayments,
     allDetention: dLoads.reduce((s,l) => s+(parseFloat(l.detention)||0), 0),
     allGrossCompanyShare: dLoads.reduce((s,l) => s+(parseFloat(l.base_pay)||0)*(1 - cut), 0),
     stillOwedRaw,
