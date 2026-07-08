@@ -883,6 +883,14 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
     return carrierAdvances.filter(a => (a.driver || '').toUpperCase() === dn.toUpperCase())
   }
 
+  // All-time cash/check paid to one driver, summed to a NUMBER (settlement_payments).
+  // Returns a number so computeRunningBalance's parseFloat subtracts it correctly.
+  function paymentsForDriver(dn) {
+    return settlementPayments
+      .filter(p => (p.driver || '').toUpperCase() === dn.toUpperCase())
+      .reduce((s,p) => s + (parseFloat(p.amount) || 0), 0)
+  }
+
   // -- PERIOD FUEL HELPERS -------------------------------------------
   function fuelForPeriod(dn, fuelTypeFilter) {
     return fuelEntries
@@ -906,6 +914,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
       driver: dn,
       ownerCutPct,
       carrierAdvances: advancesForDriver(dn),
+      settlementPaymentsTotal: paymentsForDriver(dn),
     })
   }
 
@@ -1001,6 +1010,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
       achFees: achFeesPeriod,
       escrowApplied: escrowPeriod, // display row: only when in this period
       carrierAdvanceOwed: rb.allCarrierAdvance, // all-time unrepaid (reduces balance)
+      driverPaidAllTime: rb.allSettlementPayments, // all-time cash/check paid (reduces balance)
       stillOwed: rb.stillOwed,     // running balance — all-time correct answer
     }
   }
@@ -1328,6 +1338,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
                 {s.reimbOwed > 0 && <div className="amount-row" style={{cursor:'pointer'}} onClick={() => openDrill(dn,'reimb')}><span className="label" style={{color:'var(--amber)'}}>+ Lumper Reimb &#8250;</span><span className="value" style={{color:'var(--amber)'}}>+{fmt(s.reimbOwed)}</span></div>}
                 {s.fleetFuel > 0 && <div className="amount-row" style={{cursor:'pointer'}} onClick={() => openDrill(dn,'fleetfuel')}><span className="label">Fleet Fuel &#8250;</span><span className="value" style={{color:'var(--red)'}}>{fmt(s.fleetFuel)}</span></div>}
                 {s.achDisbursed > 0 && <div className="amount-row" style={{cursor:'pointer'}} onClick={() => openDrill(dn,'ach')}><span className="label" style={{color:'#2e7d32'}}>ACH Paid Out &#8250;</span><span className="value" style={{color:'#2e7d32'}}>-{fmt(s.achDisbursed)}</span></div>}
+                {s.driverPaidAllTime > 0 && <div className="amount-row"><span className="label" style={{color:'#00c853'}}>Driver Paid (cash/check)</span><span className="value" style={{color:'#00c853'}}>-{fmt(s.driverPaidAllTime)}</span></div>}
                 {/* Carrier advance: all-time unrepaid total that reduces the balance */}
                 {s.carrierAdvanceOwed > 0 && (
                   <div className="amount-row" style={{cursor:'pointer'}} onClick={() => openDrill(dn,'carrieradv')}>
