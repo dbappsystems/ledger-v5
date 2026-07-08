@@ -47,8 +47,15 @@ import {
 // ── FROZEN GOLDEN FIXTURE — live D1 snapshot, tenant ten_edgerton, driver TIM ──
 // Captured 2026-07-08 from database 22bda25f-1827-49fb-84bf-5108b6dac114.
 // 30 loads, 82 fleet-fuel rows, 6 escrow rows, 0 carrier advances, 15% split.
+// 2026-07-09 UPDATE: now also includes TIM's one settlement_payment (a
+// $6,064.49 check, 2026-07-08). This exceeds the $3,009.53 owed, so the RAW
+// balance is -$3,054.96 and the CLAMPED display balance is $0.00. The test now
+// guards BOTH: the raw pre-clamp figure (real arithmetic) and the clamp.
 const OWNER_CUT_PCT = 15;              // tenants.driver_split_pct for ten_edgerton
-const GOLDEN_BALANCE = 3009.53;        // production balance card, verified
+const GOLDEN_BALANCE = 0.00;           // CLAMPED display balance after the payment (Math.max(0, raw))
+const GOLDEN_RAW_BALANCE = -3054.96;   // RAW pre-clamp balance: 3009.53 earned-owed - 6064.49 paid
+const PRE_PAYMENT_RAW = 3009.53;       // what raw was before the payment (drift anchor for the payment line)
+const SETTLEMENT_PAYMENT = 6064.49;    // settlement_payments: TIM check, 2026-07-08, verified live
 const GOLDEN_BASE_TOTAL = 85000.00;    // sum of all TIM base_pay (drift math anchor)
 
 // Only the fields the settlement math actually reads are kept, to keep the
@@ -154,13 +161,21 @@ const ESCROW = [
 ];
 const ESCROW_TOTAL = ESCROW.reduce((s, e) => s + e.amount, 0);
 
+// Settlement payments: the ONE live row (tenant ten_edgerton, TIM). A cash/check
+// paid directly to the driver; consumes oldest unpaid earnings first (FIFO), the
+// same mechanism as ACH. paid_at drives its position in the FIFO chain.
+const PAYMENTS = [
+  { driver: 'TIM', amount: SETTLEMENT_PAYMENT, method: 'check', reference: '', paid_at: '2026-07-08' },
+];
+const PAYMENTS_TOTAL = PAYMENTS.reduce((s, p) => s + p.amount, 0);
+
 // ── FIFO BUILDER — verbatim copy of buildFifoLedger from SettlementReport.jsx ──
 // This is the SECOND computation path. Keep byte-identical to the live file.
 // The RECON check exists precisely to scream if this copy and the live one drift.
 function monthKey(d) {
   return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }).toUpperCase();
 }
-function buildFifoLedger(dLoads, driverFuel, driverEscrow, ownerCutPct) {
+function buildFifoLedger(dLoads, driverFuel, driverEscrow, ownerCutPct, driverPayments) {
   const credits = [];
   const debits  = [];
   dLoads.forEach(l => {
@@ -188,6 +203,14 @@ function buildFifoLedger(dLoads, driverFuel, driverEscrow, ownerCutPct) {
     if (amt <= 0.005) return;
     const dt = parseAppDate(p.funded_at) || new Date(0);
     debits.push({ date: dt, type: 'ETTR', label: 'ETTR Financed Repair Payment', amount: amt });
+  });
+  (Array.isArray(driverPayments) ? driverPayments : []).forEach(p => {
+    const amt = parseFloat(p.amount) || 0;
+    if (amt <= 0.005) return;
+    const dt = parseAppDate(p.paid_at) || new Date(0);
+    const method = (p.method || 'payment').toUpperCase();
+    const ref = p.reference ? ' #' + p.reference : '';
+    debits.push({ date: dt, type: 'PAY', label: 'Driver Paid (' + method + ')' + ref, amount: amt });
   });
   credits.sort((a, b) => a.date - b.date);
   debits.sort((a, b) => a.date - b.date);
@@ -237,12 +260,28 @@ const rb = computeRunningBalance({
   driver: 'TIM',
   ownerCutPct: OWNER_CUT_PCT,
   carrierAdvances: [],
+  settlementPaymentsTotal: PAYMENTS_TOTAL,
 });
 
-// 1) GOLDEN
+// 1) GOLDEN — clamped display balance is $0.00 (payment exceeds owed)
 near(rb.stillOwed, GOLDEN_BALANCE)
-  ? ok(`GOLDEN: balance is $${GOLDEN_BALANCE.toFixed(2)}`)
-  : fail(`GOLDEN: expected $${GOLDEN_BALANCE.toFixed(2)}, got $${rb.stillOwed.toFixed(2)}`);
+  ? ok(`GOLDEN: clamped balance is $${GOLDEN_BALANCE.toFixed(2)}`)
+  : fail(`GOLDEN: expected clamped $${GOLDEN_BALANCE.toFixed(2)}, got $${rb.stillOwed.toFixed(2)}`);
+
+// 1b) GOLDEN RAW — the real pre-clamp arithmetic. This is the number with teeth:
+// Math.max(0,...) would hide drift, so we assert the raw figure directly.
+near(rb.stillOwedRaw, GOLDEN_RAW_BALANCE)
+  ? ok(`GOLDEN RAW: pre-clamp balance is $${GOLDEN_RAW_BALANCE.toFixed(2)} (3009.53 owed - 6064.49 paid)`)
+  : fail(`GOLDEN RAW: expected $${GOLDEN_RAW_BALANCE.toFixed(2)}, got $${rb.stillOwedRaw.toFixed(2)}`);
+
+// 1c) PAYMENT LINE — the payment stream ties to the live row and moves the raw
+// balance by exactly its amount (pre-payment raw was PRE_PAYMENT_RAW).
+near(rb.allSettlementPayments, SETTLEMENT_PAYMENT)
+  ? ok(`PAYMENT: settlement payments total = $${SETTLEMENT_PAYMENT.toFixed(2)}`)
+  : fail(`PAYMENT: expected $${SETTLEMENT_PAYMENT.toFixed(2)}, got $${(rb.allSettlementPayments||0).toFixed(2)}`);
+near(PRE_PAYMENT_RAW - rb.allSettlementPayments, rb.stillOwedRaw)
+  ? ok('PAYMENT: raw balance moved by exactly the payment amount')
+  : fail(`PAYMENT: PRE_PAYMENT_RAW - payment ${(PRE_PAYMENT_RAW - rb.allSettlementPayments).toFixed(2)} != stillOwedRaw ${rb.stillOwedRaw.toFixed(2)}`);
 
 // component anchors (each stream ties to the frozen live total)
 near(rb.allGrossCompanyShare, ANCHORS.companyShare) ? ok('company share (base*0.85) = $72,250.00') : fail(`company share $${rb.allGrossCompanyShare.toFixed(2)} != $${ANCHORS.companyShare}`);
@@ -259,12 +298,21 @@ near(rb.allGrossPay, rb.allGrossCompanyShare + rb.allDetention)
   : fail(`COMPONENT: allGrossPay ${rb.allGrossPay.toFixed(2)} != ${(rb.allGrossCompanyShare + rb.allDetention).toFixed(2)}`);
 
 // 2) RECON — FIFO audit path nets to authoritative
-const fifo = buildFifoLedger(loadsForModule, FUEL, ESCROW, OWNER_CUT_PCT);
+const fifo = buildFifoLedger(loadsForModule, FUEL, ESCROW, OWNER_CUT_PCT, PAYMENTS);
 const fifoUnpaid = Object.keys(fifo.unpaid).reduce((s, m) => s + fifo.unpaid[m], 0);
+// With the payment consuming all earnings, unpaid should be ~0 and the overage
+// lands in `unfunded` (ahead-of-earnings). FIFO net = unpaid - unfunded, which
+// reproduces the negative raw balance. This is the reconciliation with teeth.
 const fifoNet = fifoUnpaid - fifo.unfunded;
 near(fifoNet, rb.stillOwedRaw)
-  ? ok(`RECON: FIFO net unpaid ($${fifoNet.toFixed(2)}) == stillOwedRaw ($${rb.stillOwedRaw.toFixed(2)})`)
+  ? ok(`RECON: FIFO net ($${fifoNet.toFixed(2)}) == stillOwedRaw ($${rb.stillOwedRaw.toFixed(2)})`)
   : fail(`RECON: FIFO net $${fifoNet.toFixed(2)} != stillOwedRaw $${rb.stillOwedRaw.toFixed(2)}  (display and authoritative paths DISAGREE)`);
+near(fifoUnpaid, 0)
+  ? ok('RECON: payment consumed all earnings — FIFO unpaid is $0.00')
+  : fail(`RECON: FIFO unpaid $${fifoUnpaid.toFixed(2)} != $0.00 (payment should have consumed all earnings)`);
+near(fifo.unfunded, SETTLEMENT_PAYMENT - PRE_PAYMENT_RAW)
+  ? ok(`RECON: overage ahead-of-earnings = $${(SETTLEMENT_PAYMENT - PRE_PAYMENT_RAW).toFixed(2)}`)
+  : fail(`RECON: unfunded $${fifo.unfunded.toFixed(2)} != expected overage $${(SETTLEMENT_PAYMENT - PRE_PAYMENT_RAW).toFixed(2)}`);
 
 // per-month FIFO breakdown sums back to the balance
 near(fifoUnpaid - fifo.unfunded, rb.stillOwedRaw)
@@ -272,7 +320,7 @@ near(fifoUnpaid - fifo.unfunded, rb.stillOwedRaw)
   : fail('RECON: FIFO per-month breakdown does not sum to the balance');
 
 // 3) DRIFT PROBE — the original bug. Omitting the split must reproduce base*0.05.
-const noSplit = buildFifoLedger(loadsForModule, FUEL, ESCROW, undefined);
+const noSplit = buildFifoLedger(loadsForModule, FUEL, ESCROW, undefined, PAYMENTS);
 const noSplitNet = Object.keys(noSplit.unpaid).reduce((s, m) => s + noSplit.unpaid[m], 0) - noSplit.unfunded;
 const drift = noSplitNet - fifoNet;
 const expectedDrift = GOLDEN_BASE_TOTAL * 0.05;   // 15% correct vs 10% fallback
@@ -291,7 +339,8 @@ const manual = baseTotal * (1 - OWNER_CUT_PCT / 100)
   + ANCHORS.lumperReimb
   - ANCHORS.fleetFuelTotal
   - ANCHORS.achDisbursed
-  - ANCHORS.escrowTotal;
+  - ANCHORS.escrowTotal
+  - PAYMENTS_TOTAL;
 near(baseTotal, GOLDEN_BASE_TOTAL)
   ? ok('fixture base total = $85,000.00 (drift anchor intact)')
   : fail(`fixture base total $${baseTotal.toFixed(2)} != $${GOLDEN_BASE_TOTAL}`);
