@@ -1,5 +1,5 @@
 // src/SettlementReport.jsx
-// (c) dbappsystems.com | daddyboyapps.com
+// (c) dbappsystems.com 
 // Load Ledger V5 — Settlement Report
 //
 // AUTH MIGRATION: all 10 calls go through the token api() client. The `api`
@@ -784,6 +784,18 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
   const [advNotes,        setAdvNotes]        = useState('')
   const [advSaving,       setAdvSaving]       = useState(false)
 
+  // Driver payment (cash/check) form state — pay-side only. A payment reconciles
+  // the driver's OLDEST unpaid billed load first (FIFO), same as a general advance.
+  const [settlementPayments, setSettlementPayments] = useState([])
+  const [showPayDrawer,   setShowPayDrawer]   = useState(false)
+  const [payDriver,       setPayDriver]       = useState(isBookkeeper ? 'TIM' : driverName || 'TIM')
+  const [payDate,         setPayDate]         = useState(new Date().toISOString().split('T')[0])
+  const [payAmount,       setPayAmount]       = useState('')
+  const [payMethod,       setPayMethod]       = useState('check')
+  const [payReference,    setPayReference]    = useState('')
+  const [payNotes,        setPayNotes]        = useState('')
+  const [paySaving,       setPaySaving]       = useState(false)
+
   // WHITE-LABEL: the tenant's own drivers + colors (see render section). Hook
   // lives here with the other hooks to satisfy React's rules-of-hooks ordering.
   const { names: driverNames, colorFor } = useDrivers()
@@ -797,18 +809,21 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
       // TIM-specific — it's the Edgerton ETTR financing tracker, out of scope here.
       const fuelTasks = driverNames.map(dn => apiClient('/api/fuel/' + dn).catch(()=>[]))
       const advTasks  = driverNames.map(dn => apiClient('/api/carrier-advances/' + dn).catch(()=>[]))
+      const payTasks  = driverNames.map(dn => apiClient('/api/settlement-payments/' + dn).catch(()=>[]))
       const escrowTask = (isBookkeeper || (!isBookkeeper && driverName !== 'BRUCE'))
         ? apiClient('/api/escrow-payments/TIM').catch(()=>[])
         : Promise.resolve(null)
-      const [fuelResults, advResults, escrowResult] = await Promise.all([
+      const [fuelResults, advResults, payResults, escrowResult] = await Promise.all([
         Promise.all(fuelTasks),
         Promise.all(advTasks),
+        Promise.all(payTasks),
         escrowTask,
       ])
       const fuelFlat = fuelResults.flatMap(r => Array.isArray(r) ? r : [])
       const advFlat  = advResults.flatMap(r => Array.isArray(r) ? r : [])
       setFuelEntries(fuelFlat)
       setCarrierAdvances(advFlat)
+      setSettlementPayments(payResults.flatMap(r => Array.isArray(r) ? r : []))
       if (escrowResult) {
         setEscrowPayments(Array.isArray(escrowResult) ? escrowResult : [])
       }
@@ -836,6 +851,15 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
         driverNames.map(dn => apiClient('/api/carrier-advances/' + dn).catch(()=>[]))
       )
       setCarrierAdvances(results.flatMap(r => Array.isArray(r) ? r : []))
+    } catch {}
+  }
+
+  async function refreshPayments() {
+    try {
+      const results = await Promise.all(
+        driverNames.map(dn => apiClient('/api/settlement-payments/' + dn).catch(()=>[]))
+      )
+      setSettlementPayments(results.flatMap(r => Array.isArray(r) ? r : []))
     } catch {}
   }
 
@@ -1134,6 +1158,39 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
       } catch { showToast('Delete failed'); return }
       showToast('Carrier advance deleted')
       await refreshAdvances()
+    } catch { showToast('Delete failed') }
+  }
+
+  // -- DRIVER PAYMENT HANDLERS (pay-side: cash/check disbursements) --------
+  async function saveDriverPayment() {
+    const amt = parseFloat(payAmount)
+    if (!amt || amt <= 0) { showToast('Enter a valid amount'); return }
+    setPaySaving(true)
+    try {
+      try {
+        await apiClient('/api/settlement-payment', {
+          method: 'POST',
+          json: { driver: payDriver, paid_at: payDate, amount: amt, method: payMethod, reference: payReference, notes: payNotes },
+        })
+      } catch (e) { showToast('Save failed: ' + e.message); return }
+      showToast('Payment recorded!')
+      setPayAmount(''); setPayReference(''); setPayNotes('')
+      setShowPayDrawer(false)
+      await refreshPayments()
+    } catch (err) {
+      showToast('Save failed: ' + err.message)
+    } finally {
+      setPaySaving(false)
+    }
+  }
+
+  async function deleteDriverPayment(id) {
+    try {
+      try {
+        await apiClient('/api/settlement-payment/' + id, { method: 'DELETE' })
+      } catch { showToast('Delete failed'); return }
+      showToast('Payment deleted')
+      await refreshPayments()
     } catch { showToast('Delete failed') }
   }
 
@@ -1493,6 +1550,64 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
               </div>
               <button onClick={saveCarrierAdvance} disabled={advSaving||!advAmount} style={{ width:'100%', padding:'12px 0', borderRadius:10, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:900, fontSize:14, background:advSaving||!advAmount?'#555':'#ff9800', color:'#fff', letterSpacing:'0.06em' }}>
                 {advSaving ? 'SAVING...' : 'SAVE CARRIER ADVANCE'}
+              </button>
+            </div>
+          )}
+
+          {/* Driver payment entry form — pay-side. Records a cash/check paid to the
+              driver; reconciled FIFO against oldest unpaid billed load. Does NOT
+              touch load cards or load.status (work-product side). Owner/bookkeeper. */}
+          <button
+            onClick={() => {
+              setShowPayDrawer(p => !p)
+              setPayDate(new Date().toISOString().split('T')[0])
+              setPayAmount(''); setPayReference(''); setPayNotes(''); setPayMethod('check')
+            }}
+            style={{ width:'100%', padding:'12px 0', borderRadius:10, border:'none', marginBottom:12, fontFamily:'var(--font-head)', fontWeight:900, fontSize:13, cursor:'pointer', background: showPayDrawer ? 'var(--navy3)' : '#1a2e1a', color: showPayDrawer ? 'var(--grey)' : '#69f0ae', letterSpacing:'0.06em' }}
+          >
+            {showPayDrawer ? 'X CANCEL PAYMENT' : '\uD83D\uDCB5 ADD PAYMENT TO DRIVER'}
+          </button>
+
+          {showPayDrawer && (
+            <div className="card" style={{ marginBottom:12, border:'1px solid #2a4a2a' }}>
+              <div style={{ fontFamily:'var(--font-head)', fontSize:12, color:'#69f0ae', letterSpacing:'0.1em', marginBottom:6 }}>NEW PAYMENT TO DRIVER</div>
+              <div style={{ fontSize:10, color:'var(--grey)', marginBottom:12, fontFamily:'var(--font-head)' }}>Cash or check paid to the driver. Applied to the driver's OLDEST unpaid billed load first, then cascades forward.</div>
+              {isBookkeeper && (
+                <div style={{ marginBottom:12 }}>
+                  <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>DRIVER</div>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                    {driverNames.map(d => (
+                      <button key={d} onClick={() => setPayDriver(d)} style={{ padding:'10px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, background: payDriver===d?colorFor(d):'var(--navy3)', color: payDriver===d?'#fff':'var(--grey)' }}>{d}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>METHOD</div>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:6 }}>
+                  {['cash','check','other'].map(m => (
+                    <button key={m} onClick={() => setPayMethod(m)} style={{ padding:'9px 0', borderRadius:8, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:700, fontSize:11, letterSpacing:'0.04em', textTransform:'uppercase', background:payMethod===m?'#69f0ae':'var(--navy3)', color:payMethod===m?'var(--navy)':'var(--grey)' }}>{m}</button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>DATE</div>
+                <input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} style={inputStyle} />
+              </div>
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>AMOUNT ($)</div>
+                <input type="text" inputMode="decimal" placeholder="0.00" value={payAmount} onChange={e => setPayAmount(e.target.value)} style={{ ...inputStyle, fontSize:22, fontWeight:700, fontFamily:'var(--font-head)' }} />
+              </div>
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>REFERENCE (check # — optional)</div>
+                <input type="text" placeholder="e.g. 1042" value={payReference} onChange={e => setPayReference(e.target.value)} style={inputStyle} />
+              </div>
+              <div style={{ marginBottom:14 }}>
+                <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', marginBottom:6 }}>NOTES (optional)</div>
+                <input type="text" placeholder="e.g. Settlement week ending 7/4" value={payNotes} onChange={e => setPayNotes(e.target.value)} style={inputStyle} />
+              </div>
+              <button onClick={saveDriverPayment} disabled={paySaving||!payAmount} style={{ width:'100%', padding:'12px 0', borderRadius:10, border:'none', cursor:'pointer', fontFamily:'var(--font-head)', fontWeight:900, fontSize:14, background:paySaving||!payAmount?'#555':'#00c853', color:'#fff', letterSpacing:'0.06em' }}>
+                {paySaving ? 'SAVING...' : 'SAVE PAYMENT'}
               </button>
             </div>
           )}
