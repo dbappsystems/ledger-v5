@@ -1,5 +1,5 @@
 # Load Ledger V5 — Build Handoff
-**(c) dbappsystems.com | daddyboyapps.com**
+**(c) dbappsystems.com **
 **Last updated: 2026-06-17 (rev 4)**
 
 > Paste this at the start of a new chat to continue the build without re-deriving decisions.
