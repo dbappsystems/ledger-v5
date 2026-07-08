@@ -15,9 +15,9 @@ export default function DrilldownOverlay({ meta, driverName, periodLabel, onClos
   const TF  = { ...TD, background:'#eee', fontWeight:800, color:'#000', borderTop:'2px solid #000' }
   const TFr = { ...TF, textAlign:'right' }
   return (
-    <div onClick={onClose} style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.55)', zIndex:10000, display:'flex', alignItems:'flex-start', justifyContent:'center', padding:'24px 12px', overflowY:'auto', WebkitOverflowScrolling:'touch' }}>
+    <div onClick={onClose} style={{ position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.55)', zIndex:10000, display:'flex', alignItems:'flex-start', justifyContent:'center', padding:'calc(env(safe-area-inset-top, 0px) + 16px) 12px calc(env(safe-area-inset-bottom, 0px) + 24px)', overflowY:'auto', WebkitOverflowScrolling:'touch' }}>
       <div onClick={e => e.stopPropagation()} style={{ background:'#fff', color:'#000', width:'100%', maxWidth:560, borderRadius:6, overflow:'hidden', boxShadow:'0 8px 40px rgba(0,0,0,0.5)' }}>
-        <div style={{ background:'#000', color:'#fff', padding:'12px 14px', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+        <div style={{ background:'#000', color:'#fff', padding:'12px 14px', display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, zIndex:1 }}>
           <div>
             <div style={{ fontSize:10, letterSpacing:'0.1em', color:'rgba(255,255,255,0.7)' }}>SOURCE LEDGER — {driverName}</div>
             <div style={{ fontSize:15, fontWeight:800 }}>{meta.title}</div>
