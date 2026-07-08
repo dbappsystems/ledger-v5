@@ -496,7 +496,7 @@ export default function App() {
               {loginLoading ? 'SIGNING IN...' : 'SIGN IN'}
             </button>
           </div>
-          <div style={{ textAlign:'center', fontSize:10, color:'var(--grey)', marginTop:20 }}>dbappsystems.com | daddyboyapps.com</div>
+          <div style={{ textAlign:'center', fontSize:10, color:'var(--grey)', marginTop:20 }}>dbappsystems.com</div>
         </div>
         {toast && <div className="toast">{toast}</div>}
       </div>
