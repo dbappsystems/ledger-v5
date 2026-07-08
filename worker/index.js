@@ -1,5 +1,5 @@
 // worker/index.js
-// (c) dbappsystems.com | daddyboyapps.com
+// (c) dbappsystems.com 
 // Load Ledger V5 — Cloudflare Worker — MULTI-TENANT
 // OCR model: claude-sonnet-4-6 — matches the proven-working V4 worker. Do not
 // change to a dated 4.5 snapshot; V4 confirms 4-6 is valid on this API key.
@@ -7,6 +7,7 @@
 import { handleRouteIfta, handleIftaSummary } from './ifta.js';
 import { handleIftaManual } from './ifta_manual.js';
 import { handleRatecons } from './ratecons.js';
+import { handleSettlementPayments } from './payments.js';
 import { handleSignedMint, handleSignedServe } from './signed.js';
 
 const CORS = {
@@ -269,6 +270,10 @@ export default {
     // in its own module; returns a Response when it owns the path, else null.
     const rcResp = await handleRatecons(request, env, ctx, T, url);
     if (rcResp) return rcResp;
+    // Driver payments (cash/check) + general-advance FIFO reconciliation.
+    // Owns /api/settlement-payment(s); returns a Response when it does, else null.
+    const payResp = await handleSettlementPayments(request, env, ctx, T, url);
+    if (payResp) return payResp;
     // Mint a short-lived signed URL for an owned asset. Runs AFTER requireTenant
     // so ownership is re-verified against ctx before a token is issued.
     const signedMint = await handleSignedMint(request, env, ctx, T, url);
