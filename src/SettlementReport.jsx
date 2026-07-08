@@ -103,14 +103,14 @@ function monthKey(d) {
   return d.toLocaleDateString('en-US', { month:'short', year:'numeric' }).toUpperCase()
 }
 
-function buildFifoLedger(dLoads, driverFuel, driverEscrow) {
+function buildFifoLedger(dLoads, driverFuel, driverEscrow, ownerCutPct) {
   const credits = []
   const debits  = []
   // CREDITS: each load's net earnings at its delivery date
   // (driver net pay − comdata advance kept + lumper reimbursement)
   dLoads.forEach(l => {
     const dt  = parseAppDate(loadDate(l)) || new Date(0)
-    const net = calcPay(l).driverNet - advanceKept(l) + reimbursementOwed(l)
+    const net = calcPay(l, ownerCutPct).driverNet - advanceKept(l) + reimbursementOwed(l)
     if (net > 0.005) {
       credits.push({ date: dt, month: monthKey(dt), amount: net })
     } else if (net < -0.005) {
@@ -482,7 +482,7 @@ function StatementOverlay({ data, driverName, headerColor, onClose }) {
           <div style={{ borderRadius:8, border:'1px solid #e0e0e0', overflow:'hidden' }}>
             <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
               <tbody>
-                <tr><td style={TD}>Gross Pay — All Loads (driver split of rate con)</td><td style={TDr}>{fmt(d.allGross90)}</td></tr>
+                <tr><td style={TD}>Gross Pay — All Loads (driver split of rate con)</td><td style={TDr}>{fmt(d.allGrossCompanyShare)}</td></tr>
                 {d.allDetention > 0 && <tr style={{background:'#f1f8e9'}}><td style={{...TD,color:'#2e7d32'}}>+ Detention (all time)</td><td style={{...TDr,color:'#2e7d32'}}>{fmt(d.allDetention)}</td></tr>}
                 {d.allAdvKept > 0 && <tr style={{background:'#fafafa'}}><td style={TD}>- Broker Advance (Comdata) (all time)</td><td style={{...TDr,color:'#c62828'}}>({fmt(d.allAdvKept)})</td></tr>}
                 {d.allReimb > 0 && <tr style={{background:'#fffde7'}}><td style={{...TD,color:'#f57c00'}}>+ Lumper Reimbursements (all time)</td><td style={{...TDr,color:'#f57c00'}}>{fmt(d.allReimb)}</td></tr>}
@@ -800,6 +800,7 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
       dLoads,
       fuelEntries.filter(f => f.driver === dn.toUpperCase()),
       dn === 'TIM' ? escrowPayments : [],
+      ownerCutPct,
     )
     const fifoRows = mergeFuelRowsByMonth(fifo.debitRows)
     // Carrier advances — all-time detail rows (newest first), for the statement table
