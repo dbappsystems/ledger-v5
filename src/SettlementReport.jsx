@@ -29,6 +29,8 @@ import { useState, useRef } from 'react'
 import { api as apiClient } from './api.js'
 import { useDrivers } from './useDrivers.js'
 import DriverPaystub from './DriverPaystub.jsx'
+import DrilldownOverlay from './DrilldownOverlay.jsx'
+import { buildDrilldown } from './settlementDrilldown.js'
 import {
   normalizeOwnerCut, asArray, parseAppDate, loadDate,
   getLoadTotals, calcPay, advanceKept, reimbursementOwed,
@@ -624,6 +626,8 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
   const [periodOffset,    setPeriodOffset]    = useState(0)
   const [showStatement,   setShowStatement]   = useState(null)
   const [showPaystub,     setShowPaystub]     = useState(null)
+  // Period Activity drill-down: {driver, key} identifies which label was tapped
+  const [drilldown,       setDrilldown]       = useState(null)
 
   // Fuel entry form state
   const [showFuelDrawer,  setShowFuelDrawer]  = useState(false)
@@ -1012,6 +1016,17 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
 
   function changePeriod(p) { setPeriod(p); setPeriodOffset(0) }
 
+  // -- PERIOD ACTIVITY DRILL-DOWN --------------------------------
+  // Display-only. Reads the same period-filtered records the card uses.
+  function drillCtx() {
+    return {
+      loads, fuelEntries, escrowPayments, ownerCutPct,
+      period, periodOffset, inPeriod, inPeriodByDate, advancesForDriver,
+    }
+  }
+  function openDrill(dn, key) { setDrilldown({ driver: dn, key }) }
+  const drillMeta = drilldown ? buildDrilldown(drillCtx(), drilldown.driver, drilldown.key) : null
+
   // -- RENDER ----------------------------------------------------
   const navBtn = {
     padding:'6px 18px', borderRadius:8, border:'1px solid var(--border)',
@@ -1049,6 +1064,16 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
           ownerCutPct={ownerCutPct}
           color={colorFor(showPaystub)}
           onClose={() => setShowPaystub(null)}
+        />
+      )}
+
+      {/* Period Activity drill-down — black & white source ledger */}
+      {drilldown && drillMeta && (
+        <DrilldownOverlay
+          meta={drillMeta}
+          driverName={drilldown.driver}
+          periodLabel={getPeriodLabel(period, periodOffset)}
+          onClose={() => setDrilldown(null)}
         />
       )}
 
@@ -1115,25 +1140,25 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
                   Period Activity — {getPeriodLabel(period, periodOffset)}
                 </div>
 
-                <div className="amount-row"><span className="label">Loads</span><span className="value">{s.count}</span></div>
-                <div className="amount-row"><span className="label">Rate Con Total</span><span className="value">{fmt(s.rateCon)}</span></div>
-                <div className="amount-row"><span className="label">Driver Pay</span><span className="value" style={{color:'var(--amber)'}}>{fmt(s.grossPay - s.detentionTotal)}</span></div>
-                {s.detentionTotal > 0 && <div className="amount-row"><span className="label" style={{color:'var(--green)'}}>+ Detention</span><span className="value" style={{color:'var(--green)'}}>+{fmt(s.detentionTotal)}</span></div>}
-                {s.advanceKept > 0 && <div className="amount-row"><span className="label">Broker Advance (Comdata)</span><span className="value" style={{color:'var(--green)'}}>{fmt(s.advanceKept)}</span></div>}
-                {s.reimbOwed > 0 && <div className="amount-row"><span className="label" style={{color:'var(--amber)'}}>+ Lumper Reimb</span><span className="value" style={{color:'var(--amber)'}}>+{fmt(s.reimbOwed)}</span></div>}
-                {s.fleetFuel > 0 && <div className="amount-row"><span className="label">Fleet Fuel</span><span className="value" style={{color:'var(--red)'}}>{fmt(s.fleetFuel)}</span></div>}
-                {s.achDisbursed > 0 && <div className="amount-row"><span className="label" style={{color:'#2e7d32'}}>ACH Paid Out</span><span className="value" style={{color:'#2e7d32'}}>-{fmt(s.achDisbursed)}</span></div>}
+                <div className="amount-row" style={{cursor:'pointer'}} onClick={() => openDrill(dn,'loads')}><span className="label">Loads &#8250;</span><span className="value">{s.count}</span></div>
+                <div className="amount-row" style={{cursor:'pointer'}} onClick={() => openDrill(dn,'ratecon')}><span className="label">Rate Con Total &#8250;</span><span className="value">{fmt(s.rateCon)}</span></div>
+                <div className="amount-row" style={{cursor:'pointer'}} onClick={() => openDrill(dn,'driverpay')}><span className="label">Driver Pay &#8250;</span><span className="value" style={{color:'var(--amber)'}}>{fmt(s.grossPay - s.detentionTotal)}</span></div>
+                {s.detentionTotal > 0 && <div className="amount-row" style={{cursor:'pointer'}} onClick={() => openDrill(dn,'detention')}><span className="label" style={{color:'var(--green)'}}>+ Detention &#8250;</span><span className="value" style={{color:'var(--green)'}}>+{fmt(s.detentionTotal)}</span></div>}
+                {s.advanceKept > 0 && <div className="amount-row" style={{cursor:'pointer'}} onClick={() => openDrill(dn,'advance')}><span className="label">Broker Advance (Comdata) &#8250;</span><span className="value" style={{color:'var(--green)'}}>{fmt(s.advanceKept)}</span></div>}
+                {s.reimbOwed > 0 && <div className="amount-row" style={{cursor:'pointer'}} onClick={() => openDrill(dn,'reimb')}><span className="label" style={{color:'var(--amber)'}}>+ Lumper Reimb &#8250;</span><span className="value" style={{color:'var(--amber)'}}>+{fmt(s.reimbOwed)}</span></div>}
+                {s.fleetFuel > 0 && <div className="amount-row" style={{cursor:'pointer'}} onClick={() => openDrill(dn,'fleetfuel')}><span className="label">Fleet Fuel &#8250;</span><span className="value" style={{color:'var(--red)'}}>{fmt(s.fleetFuel)}</span></div>}
+                {s.achDisbursed > 0 && <div className="amount-row" style={{cursor:'pointer'}} onClick={() => openDrill(dn,'ach')}><span className="label" style={{color:'#2e7d32'}}>ACH Paid Out &#8250;</span><span className="value" style={{color:'#2e7d32'}}>-{fmt(s.achDisbursed)}</span></div>}
                 {/* Carrier advance: all-time unrepaid total that reduces the balance */}
                 {s.carrierAdvanceOwed > 0 && (
-                  <div className="amount-row">
-                    <span className="label" style={{color:'#e65100'}}>Carrier Advance (unrepaid)</span>
+                  <div className="amount-row" style={{cursor:'pointer'}} onClick={() => openDrill(dn,'carrieradv')}>
+                    <span className="label" style={{color:'#e65100'}}>Carrier Advance (unrepaid) &#8250;</span>
                     <span className="value" style={{color:'#e65100'}}>-{fmt(s.carrierAdvanceOwed)}</span>
                   </div>
                 )}
                 {/* Escrow: display row only when it was recorded in this period */}
                 {s.escrowApplied > 0 && (
-                  <div className="amount-row">
-                    <span className="label" style={{color:'#ce93d8'}}>ETTR Repair Payment (this period)</span>
+                  <div className="amount-row" style={{cursor:'pointer'}} onClick={() => openDrill(dn,'escrow')}>
+                    <span className="label" style={{color:'#ce93d8'}}>ETTR Repair Payment (this period) &#8250;</span>
                     <span className="value" style={{color:'#ce93d8'}}>-{fmt(s.escrowApplied)}</span>
                   </div>
                 )}
