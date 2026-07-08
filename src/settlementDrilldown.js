@@ -21,6 +21,7 @@ export function buildDrilldown(ctx, dn, key) {
   const {
     loads, fuelEntries, escrowPayments, ownerCutPct,
     period, periodOffset, inPeriod, inPeriodByDate, advancesForDriver,
+    settlementPayments,
   } = ctx
 
   const dLoads   = loads.filter(l => l.driver === dn)
@@ -154,6 +155,25 @@ export function buildDrilldown(ctx, dn, key) {
       note:'ETTR financed repair payments funded in this period. Applied against the driver balance.',
       cols:['Date','Notes','Amount'],
       rows, footer:['PERIOD TOTAL','', fmt(t)],
+    }
+  }
+
+  if (key === 'driverpaid') {
+    const list = (Array.isArray(settlementPayments) ? settlementPayments : [])
+      .filter(p => (p.driver || '').toUpperCase() === dn.toUpperCase())
+      .slice()
+      .sort((a,b) => String(b.paid_at||'').localeCompare(String(a.paid_at||'')))
+    let t = 0
+    const rows = list.map(p => {
+      const amt = parseFloat(p.amount) || 0
+      t += amt
+      return [ (p.paid_at || '-'), (p.method || 'payment').toUpperCase(), (p.reference ? '#' + p.reference : '-'), (p.notes || '-'), fmt(amt) ]
+    })
+    return {
+      title:'Driver Paid (cash/check) \u2014 all time',
+      note:'Every cash or check paid directly to the driver (all-time). Each payment reconciles the oldest unpaid billed load first (FIFO) and reduces the balance owed. This total is all-time, not period-scoped.',
+      cols:['Date','Method','Ref','Notes','Amount'],
+      rows, footer:['ALL-TIME TOTAL','','','', fmt(t)],
     }
   }
 
