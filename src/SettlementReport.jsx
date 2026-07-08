@@ -821,9 +821,14 @@ export default function SettlementReport({ driverName, loads, showToast, ownerCu
       const fuelTasks = driverNames.map(dn => apiClient('/api/fuel/' + dn).catch(()=>[]))
       const advTasks  = driverNames.map(dn => apiClient('/api/carrier-advances/' + dn).catch(()=>[]))
       const payTasks  = driverNames.map(dn => apiClient('/api/settlement-payments/' + dn).catch(()=>[]))
-      const escrowTask = (isBookkeeper || (!isBookkeeper && driverName !== 'BRUCE'))
-        ? apiClient('/api/escrow-payments/TIM').catch(()=>[])
-        : Promise.resolve(null)
+      // Escrow is TIM-specific (the Edgerton ETTR financing tracker) but it must
+      // load for EVERY viewer of TIM — TIM himself, the bookkeeper, AND an owner
+      // (Bruce) viewing TIM. The old `driverName !== 'BRUCE'` exclusion meant that
+      // when Bruce loaded the report while viewing himself first, escrow never
+      // fetched, and the load guard then kept it empty after he toggled to TIM —
+      // so Bruce saw TIM's balance WITHOUT the escrow offset TIM already applied.
+      // Always fetch it; it's harmless (empty) for any non-TIM driver.
+      const escrowTask = apiClient('/api/escrow-payments/TIM').catch(()=>[])
       const [fuelResults, advResults, payResults, escrowResult] = await Promise.all([
         Promise.all(fuelTasks),
         Promise.all(advTasks),
