@@ -355,20 +355,54 @@ function StatementOverlay({ data, driverName, headerColor, onClose }) {
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' })
       const pageW = pdf.internal.pageSize.getWidth()
       const pageH = pdf.internal.pageSize.getHeight()
-      const margin = 24
-      const imgW = pageW - margin * 2
-      const imgH = (canvas.height * imgW) / canvas.width
+      const margin = 28                       // top + bottom + side breathing room on every page
+      const imgW = pageW - margin * 2          // printable width in PDF points
+      const usableH = pageH - margin * 2       // printable height in PDF points
+      // pixels of the source canvas that fit on one page at this width
+      const pxPerPage = Math.floor((usableH * canvas.width) / imgW)
 
-      const imgData = canvas.toDataURL('image/png')
-      let heightLeft = imgH
-      let position = margin
-      pdf.addImage(imgData, 'PNG', margin, position, imgW, imgH)
-      heightLeft -= (pageH - margin * 2)
-      while (heightLeft > 0) {
-        position = margin - (imgH - heightLeft)
-        pdf.addPage()
-        pdf.addImage(imgData, 'PNG', margin, position, imgW, imgH)
-        heightLeft -= (pageH - margin * 2)
+      // Find a clean horizontal break at or before `target` px: scan upward for a
+      // near-white row (the gap between table rows) so a page never cuts through
+      // text. Falls back to the hard target only if no gap is found in range.
+      const ctxScan = canvas.getContext('2d')
+      function isBlankRow(y) {
+        // sample across the width; treat the row as blank if every sample is light
+        const row = ctxScan.getImageData(0, y, canvas.width, 1).data
+        const step = 4 * 8                     // sample every 8th pixel for speed
+        for (let x = 0; x < row.length; x += step) {
+          if (row[x] < 244 || row[x + 1] < 244 || row[x + 2] < 244) return false
+        }
+        return true
+      }
+      function findBreak(target) {
+        if (target >= canvas.height) return canvas.height
+        const minY = target - Math.floor(pxPerPage * 0.30)   // don't back up more than 30% of a page
+        for (let y = target; y >= Math.max(minY, 1); y--) {
+          if (isBlankRow(y)) return y
+        }
+        return target                                        // no gap found — cut at target
+      }
+
+      let sliceTop = 0
+      let first = true
+      while (sliceTop < canvas.height) {
+        const rawTarget = sliceTop + pxPerPage
+        const sliceBottom = findBreak(Math.min(rawTarget, canvas.height))
+        const sliceH = sliceBottom - sliceTop
+        // draw this slice onto its own canvas so it lands top-anchored with margins
+        const pageCanvas = document.createElement('canvas')
+        pageCanvas.width = canvas.width
+        pageCanvas.height = sliceH
+        const pctx = pageCanvas.getContext('2d')
+        pctx.fillStyle = '#ffffff'
+        pctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height)
+        pctx.drawImage(canvas, 0, sliceTop, canvas.width, sliceH, 0, 0, canvas.width, sliceH)
+        const sliceImgH = (sliceH * imgW) / canvas.width      // PDF-point height of this slice
+        if (!first) pdf.addPage()
+        pdf.addImage(pageCanvas.toDataURL('image/png'), 'PNG', margin, margin, imgW, sliceImgH)
+        first = false
+        sliceTop = sliceBottom
+        if (sliceH <= 0) break                                // safety: never loop forever
       }
 
       const safeName = String(driverName || 'driver').replace(/[^a-z0-9]+/gi, '_')
