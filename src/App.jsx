@@ -39,8 +39,9 @@
 // LIVE STATE MILES (2026-07-07): a LOG STATE MILES button (IftaDailyLog.jsx) is
 // rendered for drivers on the Loads pages. It logs the driver's own odometer at
 // each state line (raw daily chain) via POST /api/ifta/manual, writing the FACT
-// record beside the routed IFTA estimate. Placed inline in the header (centered
-// over the LOADS area) via IftaDailyLog's `inline` prop.
+// record beside the routed IFTA estimate. Placed inline in the header, centered
+// over the LOADS area via a full-width pointer-events:none strip (no transform,
+// so the component's own position:fixed drawer still escapes to the viewport).
 
 import { useState, useEffect } from 'react'
 import RateCon          from './RateCon.jsx'
@@ -527,8 +528,10 @@ export default function App() {
           <RateToggle />
         </div>
         {!isBookkeeper && tab === 'loads' && (loadsSubView === 'list' || loadsSubView === 'ratecon') && (
-          <div style={{ position:'absolute', left:'50%', top:'50%', transform:'translate(-50%,-50%)', zIndex:10, display:'flex', alignItems:'center' }}>
-            <IftaDailyLog driver={activeDriver} showToast={showToast} inline />
+          <div style={{ position:'absolute', left:0, right:0, top:0, bottom:0, zIndex:10, display:'flex', alignItems:'center', justifyContent:'center', pointerEvents:'none' }}>
+            <div style={{ pointerEvents:'auto' }}>
+              <IftaDailyLog driver={activeDriver} showToast={showToast} inline />
+            </div>
           </div>
         )}
         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
