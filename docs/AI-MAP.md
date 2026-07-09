@@ -112,9 +112,29 @@ Loads.jsx · Invoice.jsx · Maintenance.jsx · SettlementReport.jsx · Tax.jsx
 (redundant — Tax.jsx already does this) · DrilldownOverlay.jsx
 Logic: settlementMath.js · settlementFifo.js · settlementDrilldown.js · useDrivers.js
 
-**Signup gap (verified):** `POST /api/apply` exists but NOTHING in the front-end
-calls it and `index.html` has no signup route. There is no live public signup page
-today. The `signup_requests` table stays empty because no page feeds it.
+**Signup pipeline (VERIFIED LIVE):** the public signup page is a STATIC page in
+`public/`, NOT in `src/`. It is live at `https://loadledgers.com/apply/` (HTTP 200),
+plain HTML + vanilla JS, `noindex` (private link). It POSTs to
+`ledger-v5.d49rwgmpj9.workers.dev/api/apply` with exact fields the worker expects.
+Endpoint verified writing to `signup_requests`. The table is empty only because no
+prospect has submitted — the pipeline is intact end to end. Do NOT conclude "no
+signup page" from grepping `src/` alone — always check `public/` for static pages.
+
+---
+
+## STATIC PUBLIC PAGES (public/) — served directly by Pages, outside the React app
+
+| Path (live) | File | Purpose |
+|---|---|---|
+| /apply/ | public/apply/index.html | Prospect signup → POST /api/apply → signup_requests |
+| /contact/ | public/contact/ | Contact form |
+| /privacy/ | public/privacy/ | Privacy policy |
+| /terms/ | public/terms/ | Terms |
+| /dpa/ | public/dpa/ | Data processing addendum |
+| public/_headers | — | Cloudflare Pages CSP/headers live HERE (not index.html) |
+
+The React app (src/) is separate. Signup, contact, and legal pages do NOT appear
+in App.jsx routing — they are static under public/.
 
 ---
 
