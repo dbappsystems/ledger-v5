@@ -105,7 +105,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
   const [savingV5,      setSavingV5]      = useState(null)   // loadId currently saving (or 'ALL')
   const [savedV5,       setSavedV5]       = useState({})     // { [loadId]: true } saved this session
 
-  // ── LOAD ACTIONS ──────────────────────────────────────────
+  // ── LOAD ACTIONS ──────────────────────────────────────
   async function patchLoad(load, localIdx, fields) {
     setUpdating(load.id || localIdx)
     try {
@@ -172,7 +172,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     finally { setDeleting(false) }
   }
 
-  // ── SAVE LEGACY V4 INVOICE INTO V5 ────────────────────────
+  // ── SAVE LEGACY V4 INVOICE INTO V5 ──────────────────────
   // POST /api/invoice/:id/save — worker reads the stored PDF from the V4 bucket
   // and writes it into the V5 bucket. Returns {ok,savedBytes} or {ok,alreadyInV5}.
   // Returns 'saved' | 'already' | 'none' | 'error' so the bulk runner can tally.
@@ -220,7 +220,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     try { await fetchLoads() } catch {}
   }
 
-  // ── EDIT HELPERS ──────────────────────────────────────────
+  // ── EDIT HELPERS ──────────────────────────────────────
   function openEdit(load, localIdx) {
     if (editIdx === localIdx) { setEditIdx(null); setEditData(null); return }
     setEditIdx(localIdx)
@@ -255,7 +255,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     return (base_pay + lumperTotal + incTotal + detention + pallets) - comdataTotal
   }
 
-  // ── CORRECTED PDF ─────────────────────────────────────────
+  // ── CORRECTED PDF ─────────────────────────────────────
   function generateCorrectedPDF(load, data, newNetPay) {
     const ts            = tenantSettings || {}
     const coName        = (ts.display_name && ts.display_name.trim())
@@ -467,7 +467,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     closeEdit()
   }
 
-  // ── HELPERS ───────────────────────────────────────────────
+  // ── HELPERS ───────────────────────────────────────────
   function fmt(n)         { return '$' + (parseFloat(n)||0).toFixed(2) }
   function loadDate(load) { return load.delivery_date || load.date || load.created_at || null }
   function loadSortTime(load) {
@@ -479,7 +479,15 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
   // history/logs/Referer). The tab is opened SYNCHRONOUSLY (iOS Chrome popup
   // rule) then pointed at the signed link once the mint call resolves.
   async function viewStoredInvoice(load) {
-    const win = window.open('', '_blank', 'noopener,noreferrer')
+    // NOTE: no 'noopener' in the features string — per spec that makes
+    // window.open return NULL, so `win.location = full` below never ran and
+    // the pre-opened tab sat on about:blank forever (the "blank invoice"
+    // bug). The fallback window.open after the await was then killed by the
+    // iOS Chrome popup blocker (gesture context lost across the async gap).
+    // Open plainly to keep the handle, then sever opener manually for the
+    // same security effect before navigating.
+    const win = window.open('', '_blank')
+    if (win) { try { win.opener = null } catch (_) { /* ignore */ } }
     try {
       const res = await apiClient('/api/signed-url', {
         method: 'POST',
@@ -499,7 +507,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     }
   }
 
-  // ── COMPUTED ──────────────────────────────────────────────
+  // ── COMPUTED ──────────────────────────────────────────
   const leaderboard = driverNames.map(name => {
     const dLoads = loads.filter(l => l.driver === name)
     const total  = dLoads.reduce((s,l) => s + (parseFloat(l.netPay||l.net_pay)||0), 0)
@@ -523,7 +531,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     fontSize:14, fontFamily:'var(--font-body)', boxSizing:'border-box',
   }
 
-  // ── EMPTY STATE ───────────────────────────────────────────
+  // ── EMPTY STATE ───────────────────────────────────────
   if (loads.length === 0) {
     return (
       <div className="empty-state">
@@ -533,7 +541,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     )
   }
 
-  // ── RENDER ────────────────────────────────────────────────
+  // ── RENDER ─────────────────────────────────────────────
   const tabValues = ['all', ...driverNames]
   return (
     <div>
