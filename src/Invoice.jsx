@@ -56,6 +56,19 @@
 // — comes from the tenant's own settings (display_name, legal_name,
 // remit_address, mc_number, dot_number, support_email, slug from migration 0002),
 // resolved from the session token by the worker. Fallbacks are NEUTRAL/blank.
+//
+// D1 PAYLOAD SIZE (2026-07-08):
+//   Bruce hit "String or blob too big" saving a load with scanned lumper/
+//   incidental/comdata receipts. Root cause: the POST /api/loads body sent the
+//   FULL line-item objects, each carrying dataUrl + base64 (the receipt image
+//   as a data URI). The worker JSON.stringifies those arrays into single D1
+//   TEXT columns (loads.lumpers/incidentals/comdatas), and a few receipt images
+//   overflow D1's ~1MB per-value cap. BOLs never tripped this because only
+//   bol_count (a number) is sent. Fix: stripImg() removes dataUrl/base64 from
+//   each line item in the DB payload ONLY. The images stay in component state,
+//   so the PDF build and R2 upload below are unchanged — receipts still render
+//   and upload exactly as before. D1 keeps amount/label/w/h so reloaded load
+//   cards still show the lines.
 
 import { useState, useRef } from 'react'
 import { jsPDF } from 'jspdf'
@@ -679,6 +692,14 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
   // PROVEN ORDER: 1) D1 save  2) Build PDF  3) R2 upload  4) doc.save() download
   // doc.save() must fire LAST — it triggers the phone download
   // which if fired early causes subsequent fetches to be dropped
+
+  // D1 stores line-item METADATA only — never the receipt image bytes.
+  // dataUrl/base64 ride into the PDF (built below) and up to R2, exactly like
+  // BOLs (which send only a count). Sending the image strings to D1 overflows
+  // its ~1MB per-value cap ("String or blob too big"). stripImg removes them
+  // from the DB payload ONLY; component state keeps the images for the PDF.
+  const stripImg = ({ dataUrl, base64, ...keep }) => keep
+
   async function generatePDF() {
 
     // ── STEP 1: SAVE TO D1 FIRST ─────────────────────────
@@ -705,9 +726,9 @@ export default function Invoice({ load, setLoad, driver, showToast, fetchLoads, 
           net_pay:          netPay,
           notes:            load.notes         || '',
           bol_count:        load.bols.length,
-          lumpers:          load.lumpers,
-          incidentals:      load.incidentals,
-          comdatas:         load.comdatas,
+          lumpers:          load.lumpers.map(stripImg),
+          incidentals:      load.incidentals.map(stripImg),
+          comdatas:         load.comdatas.map(stripImg),
           status:           'invoiced',
         },
       })
