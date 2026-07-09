@@ -23,6 +23,23 @@ function json(data, status = 200) {
   });
 }
 
+// Generic error responder. Info-disclosure hardening: never return a raw
+// exception message (e.message) or DB/internal detail to the client — that
+// hands an attacker a map. Log the real error server-side (Cloudflare tail /
+// Logpush) and return a stable, generic shape. `code` is a short static tag
+// so support can correlate a user report to the logged line without exposing
+// internals. HttpError messages are author-written and safe, so those pass
+// through unchanged with their status.
+function safeError(e, code = 'ERR') {
+  try {
+    console.error('[' + code + ']', e && e.stack ? e.stack : (e && e.message ? e.message : String(e)));
+  } catch (_) { /* logging must never throw */ }
+  if (e instanceof HttpError) {
+    return json({ error: e.message }, e.status || 400);
+  }
+  return json({ error: 'Something went wrong. Please try again.', code }, 500);
+}
+
 const SESSION_TTL_HOURS = 12;
 
 // Password hashing. Two formats are supported so upgrades never lock anyone out:
@@ -277,7 +294,7 @@ export default {
           driver_name: user.driver_name, role: user.role,
         });
       } catch(e) {
-        return json({ error: e.message }, 500);
+        return safeError(e);
       }
     }
 
@@ -307,14 +324,17 @@ export default {
           cap(b.equipment,500), cap(b.notes,2000),
         ).run();
         return json({ ok: true, id });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     let ctx;
     try {
       ctx = await requireTenant(env, request);
     } catch (e) {
-      return json({ error: e.message }, e.status || 401);
+      // HttpError messages here (Missing/Invalid/Expired session) are safe and
+      // user-actionable; safeError passes them through with their status and
+      // genericizes anything unexpected.
+      return safeError(e, 'AUTH');
     }
     const T = ctx.tenant_id;
 
@@ -373,7 +393,7 @@ export default {
         const data = JSON.parse(raw);
         return json({ result: data?.content?.[0]?.text ?? '' });
       } catch (e) {
-        return json({ error: 'Worker exception', detail: e.message }, 500);
+        return safeError(e, 'OCR');
       }
     }
 
@@ -383,7 +403,7 @@ export default {
           'SELECT * FROM loads WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 100'
         ).bind(T).all();
         return json(results);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/loads' && request.method === 'POST') {
@@ -461,7 +481,7 @@ export default {
           b.status||'invoiced',
         ).run();
         return json({ id });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/upload-pdf' && request.method === 'POST') {
@@ -477,7 +497,7 @@ export default {
         const invoiceUrl = '/api/invoice/' + loadId;
         await env.DB.prepare('UPDATE loads SET invoice_url=? WHERE id=? AND tenant_id=?').bind(invoiceUrl, loadId, T).run();
         return json({ ok: true, url: invoiceUrl });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     // ── RATE CON STORAGE (R2) ────────────────────────────────────────────
@@ -497,7 +517,7 @@ export default {
         const rateConUrl = '/api/ratecon/' + loadId;
         await env.DB.prepare('UPDATE loads SET rate_conf_url=? WHERE id=? AND tenant_id=?').bind(rateConUrl, loadId, T).run();
         return json({ ok: true, url: rateConUrl });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/ratecon/') && request.method === 'GET') {
@@ -511,7 +531,7 @@ export default {
         return new Response(object.body, {
           headers: { ...CORS, 'Content-Type': 'application/pdf', 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
         });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     // ── SAVE LEGACY V4 INVOICE INTO V5 (fetch V4 URL -> R2) ──────────────
@@ -543,7 +563,7 @@ export default {
         await env.DB.prepare('UPDATE loads SET invoice_url=? WHERE id=? AND tenant_id=?')
           .bind('/api/invoice/' + loadId, loadId, T).run();
         return json({ ok: true, savedBytes: buf.byteLength });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     // ── SERVE INVOICE PDF (V5 bucket, with V4 fallback) ──────────────────
@@ -564,7 +584,7 @@ export default {
         return new Response(v4.body, {
           headers: { ...CORS, 'Content-Type': 'application/pdf', 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
         });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/credentials/') && !path.includes('/file/') && request.method === 'GET') {
@@ -584,7 +604,7 @@ export default {
           };
         }
         return json(row);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/credentials/') && !path.includes('/file/') && request.method === 'PATCH') {
@@ -622,7 +642,7 @@ export default {
           b.insurance_snooze||'', b.heavy_use_tax_snooze||'',
         ).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.includes('/api/credentials/') && path.includes('/file/') && request.method === 'POST') {
@@ -637,7 +657,7 @@ export default {
         const ext = mediaType === 'application/pdf' ? 'pdf' : 'jpg';
         await env.R2.put(T + '/credentials/' + driver + '/' + credKey + '.' + ext, bytes, { httpMetadata: { contentType: mediaType } });
         return json({ ok: true, url: '/api/credentials/' + driver + '/file/' + credKey });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.includes('/api/credentials/') && path.includes('/file/') && request.method === 'GET') {
@@ -656,7 +676,7 @@ export default {
         return new Response(object.body, {
           headers: { ...CORS, 'Content-Type': contentType, 'Content-Disposition': 'inline', 'Cache-Control': 'no-store, no-cache, must-revalidate' },
         });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/maintenance/') && request.method === 'GET') {
@@ -666,7 +686,7 @@ export default {
           'SELECT * FROM maintenance_ledger WHERE tenant_id=? AND driver=? ORDER BY entry_date DESC, created_at DESC LIMIT 200'
         ).bind(T, driver).all();
         return json(results);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/maintenance' && request.method === 'POST') {
@@ -684,7 +704,7 @@ export default {
           parseFloat(b.amount)||0, b.paid_by||'TIM', b.asset_id||'', b.receipt_url||'',
         ).run();
         return json({ id });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/maintenance/') && path.split('/').length === 4 && request.method === 'PATCH') {
@@ -700,7 +720,7 @@ export default {
         values.push(id, T);
         await env.DB.prepare('UPDATE maintenance_ledger SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/maintenance/') && path.split('/').length === 4 && request.method === 'DELETE') {
@@ -718,7 +738,7 @@ export default {
         }
         await env.DB.prepare('DELETE FROM maintenance_ledger WHERE id=? AND tenant_id=?').bind(id, T).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/maintenance-receipt/') && request.method === 'POST') {
@@ -735,7 +755,7 @@ export default {
         const receiptUrl = '/api/maintenance-receipt/' + entryId;
         await env.DB.prepare('UPDATE maintenance_ledger SET receipt_url=? WHERE id=? AND tenant_id=?').bind(receiptUrl, entryId, T).run();
         return json({ ok: true, url: receiptUrl });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/maintenance-receipt/') && request.method === 'GET') {
@@ -761,7 +781,7 @@ export default {
         return new Response(v4.body, {
           headers: { ...CORS, 'Content-Type': v4.contentType || 'image/jpeg', 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
         });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/escrow-payments/') && request.method === 'GET') {
@@ -771,7 +791,7 @@ export default {
           'SELECT * FROM escrow_payments WHERE tenant_id=? AND driver=? ORDER BY funded_at DESC LIMIT 200'
         ).bind(T, driver).all();
         return json(results);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/escrow-payment' && request.method === 'POST') {
@@ -786,7 +806,7 @@ export default {
           VALUES (?,?,?,?,?,datetime('now'))
         `).bind(id, T, b.driver.toUpperCase(), amount, b.funded_at || new Date().toISOString()).run();
         return json({ id });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/assets/') && !path.includes('/payments') && request.method === 'GET') {
@@ -796,7 +816,7 @@ export default {
           'SELECT * FROM assets WHERE tenant_id=? AND driver=? ORDER BY created_at ASC'
         ).bind(T, driver).all();
         return json(results);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/assets' && request.method === 'POST') {
@@ -819,7 +839,7 @@ export default {
           b.owed_to||'', b.purchase_date||'', parseFloat(b.estimated_value)||0,
         ).run();
         return json({ id });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/assets/') && !path.includes('/payments') && request.method === 'PATCH') {
@@ -839,7 +859,7 @@ export default {
         values.push(id, T);
         await env.DB.prepare('UPDATE assets SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/assets/') && !path.includes('/payments') && request.method === 'DELETE') {
@@ -854,7 +874,7 @@ export default {
         await env.DB.prepare('DELETE FROM assets WHERE id=? AND tenant_id=?').bind(id, T).run();
         await env.DB.prepare('DELETE FROM asset_payments WHERE asset_id=? AND tenant_id=?').bind(id, T).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.includes('/api/assets/') && path.includes('/payments') && request.method === 'GET') {
@@ -864,7 +884,7 @@ export default {
           'SELECT * FROM asset_payments WHERE asset_id=? AND tenant_id=? ORDER BY payment_date DESC, created_at DESC'
         ).bind(assetId, T).all();
         return json(results);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.includes('/api/assets/') && path.includes('/payments') && !path.includes('/payments/') && request.method === 'POST') {
@@ -882,7 +902,7 @@ export default {
         `).bind(id, T, assetId, b.driver.toUpperCase(), b.payment_date||'', amount, b.notes||'').run();
         await env.DB.prepare('UPDATE assets SET balance_owed = MAX(0, balance_owed - ?) WHERE id=? AND tenant_id=?').bind(amount, assetId, T).run();
         return json({ id });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.includes('/api/assets/') && path.includes('/payments/') && request.method === 'DELETE') {
@@ -899,7 +919,7 @@ export default {
         await env.DB.prepare('DELETE FROM asset_payments WHERE id=? AND tenant_id=?').bind(paymentId, T).run();
         await env.DB.prepare('UPDATE assets SET balance_owed = balance_owed + ? WHERE id=? AND tenant_id=?').bind(row.amount, assetId, T).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/loads/') && request.method === 'PATCH') {
@@ -938,7 +958,7 @@ export default {
         values.push(id, T);
         await env.DB.prepare('UPDATE loads SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/loads/') && request.method === 'DELETE') {
@@ -959,7 +979,7 @@ export default {
         await env.DB.prepare('DELETE FROM load_stops WHERE tenant_id=? AND load_id=?').bind(T, id).run();
         await env.DB.prepare('DELETE FROM loads WHERE id=? AND tenant_id=?').bind(id, T).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/fuel/') && request.method === 'GET') {
@@ -969,7 +989,7 @@ export default {
           'SELECT * FROM fuel_entries WHERE tenant_id=? AND driver=? ORDER BY entry_date DESC, created_at DESC LIMIT 500'
         ).bind(T, driver).all();
         return json(results);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/fuel' && request.method === 'POST') {
@@ -988,7 +1008,7 @@ export default {
           (b.odometer === undefined || b.odometer === null || b.odometer === '') ? null : (parseFloat(b.odometer) || 0),
         ).run();
         return json({ id });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/fuel/') && path.split('/').length === 4 && request.method === 'PATCH') {
@@ -1005,7 +1025,7 @@ export default {
         values.push(id, T);
         await env.DB.prepare('UPDATE fuel_entries SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/fuel/') && path.split('/').length === 4 && request.method === 'DELETE') {
@@ -1019,7 +1039,7 @@ export default {
         }
         await env.DB.prepare('DELETE FROM fuel_entries WHERE id=? AND tenant_id=?').bind(id, T).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     // ─── FUEL REPORT RECONCILE ───────────────────────────────────────────────
@@ -1176,7 +1196,7 @@ export default {
         }
         return json({ applied: true, summary });
       } catch (e) {
-        return json({ error: 'Reconcile exception', detail: e.message }, 500);
+        return safeError(e, 'RECONCILE');
       }
     }
 
@@ -1194,7 +1214,7 @@ export default {
         const receiptUrl = '/api/fuel-receipt/' + entryId;
         await env.DB.prepare('UPDATE fuel_entries SET receipt_url=? WHERE id=? AND tenant_id=?').bind(receiptUrl, entryId, T).run();
         return json({ ok: true, url: receiptUrl });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/fuel-receipt/') && request.method === 'GET') {
@@ -1216,7 +1236,7 @@ export default {
         return new Response(v4.body, {
           headers: { ...CORS, 'Content-Type': v4.contentType || 'image/jpeg', 'Content-Disposition': 'inline', 'Cache-Control': 'private, max-age=3600' },
         });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/brokers' && request.method === 'GET') {
@@ -1225,7 +1245,7 @@ export default {
           'SELECT * FROM brokers WHERE tenant_id=? ORDER BY broker_name ASC'
         ).bind(T).all();
         return json(results);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/brokers' && request.method === 'POST') {
@@ -1262,7 +1282,7 @@ export default {
           b.broker_contact||'', b.broker_address||'',
         ).run();
         return json({ id, updated: false });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/brokers/') && path.endsWith('/loads') && request.method === 'GET') {
@@ -1288,7 +1308,7 @@ export default {
         const totalLoads = results.length;
         const totalGross = results.reduce((sum, l) => sum + (parseFloat(l.base_pay) || 0), 0);
         return json({ loads: results, totalLoads, totalGross });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/brokers/') && path.split('/').length === 4 && request.method === 'PATCH') {
@@ -1305,7 +1325,7 @@ export default {
         values.push(id, T);
         await env.DB.prepare('UPDATE brokers SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/brokers/') && path.split('/').length === 4 && request.method === 'DELETE') {
@@ -1315,7 +1335,7 @@ export default {
         if (!row) return json({ error: 'Broker not found' }, 404);
         await env.DB.prepare('DELETE FROM brokers WHERE id=? AND tenant_id=?').bind(id, T).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/tenant/settings' && request.method === 'GET') {
@@ -1328,7 +1348,7 @@ export default {
         ).bind(T).first();
         if (!row) return json({ error: 'Tenant not found' }, 404);
         return json(row);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/tenant/settings' && request.method === 'PATCH') {
@@ -1357,7 +1377,7 @@ export default {
         values.push(T);
         await env.DB.prepare('UPDATE tenants SET ' + fields.join(', ') + ' WHERE id=?').bind(...values).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/drivers' && request.method === 'GET') {
@@ -1366,7 +1386,7 @@ export default {
           'SELECT * FROM drivers WHERE tenant_id=? ORDER BY active DESC, name ASC'
         ).bind(T).all();
         return json(results);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/drivers' && request.method === 'POST') {
@@ -1407,7 +1427,7 @@ export default {
           b.active === undefined ? 1 : (b.active ? 1 : 0),
         ).run();
         return json({ id, updated: false });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/drivers/') && path.split('/').length === 4 && request.method === 'PATCH') {
@@ -1428,7 +1448,7 @@ export default {
         values.push(id, T);
         await env.DB.prepare('UPDATE drivers SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/drivers/') && path.split('/').length === 4 && request.method === 'DELETE') {
@@ -1439,7 +1459,7 @@ export default {
         if (!row) return json({ error: 'Driver not found' }, 404);
         await env.DB.prepare('DELETE FROM drivers WHERE id=? AND tenant_id=?').bind(id, T).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/carrier-advances/') && request.method === 'GET') {
@@ -1449,7 +1469,7 @@ export default {
           'SELECT * FROM carrier_advances WHERE tenant_id=? AND driver=? ORDER BY advance_date DESC, created_at DESC LIMIT 500'
         ).bind(T, driver).all();
         return json(results);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/carrier-advance' && request.method === 'POST') {
@@ -1472,7 +1492,7 @@ export default {
           reason, b.notes || '', b.asset_id || '',
         ).run();
         return json({ id });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/carrier-advance/') && path.split('/').length === 4 && request.method === 'PATCH') {
@@ -1498,7 +1518,7 @@ export default {
         values.push(id, T);
         await env.DB.prepare('UPDATE carrier_advances SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/carrier-advance/') && path.split('/').length === 4 && request.method === 'DELETE') {
@@ -1509,7 +1529,7 @@ export default {
         if (!row) return json({ error: 'Advance not found' }, 404);
         await env.DB.prepare('DELETE FROM carrier_advances WHERE id=? AND tenant_id=?').bind(id, T).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     // ── RECURRING CHARGES (insurance, plates, payment plans) ─────────────
@@ -1524,7 +1544,7 @@ export default {
           'SELECT * FROM recurring_charges WHERE tenant_id=? AND driver=? ORDER BY active DESC, charge_type ASC, created_at DESC LIMIT 500'
         ).bind(T, driver).all();
         return json(results);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/recurring-charge' && request.method === 'POST') {
@@ -1550,7 +1570,7 @@ export default {
           (b.notes || '').toString().slice(0, 500),
         ).run();
         return json({ id });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/recurring-charge/') && path.split('/').length === 4 && request.method === 'PATCH') {
@@ -1575,7 +1595,7 @@ export default {
         values.push(id, T);
         await env.DB.prepare('UPDATE recurring_charges SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/recurring-charge/') && path.split('/').length === 4 && request.method === 'DELETE') {
@@ -1586,7 +1606,7 @@ export default {
         if (!row) return json({ error: 'Charge not found' }, 404);
         await env.DB.prepare('DELETE FROM recurring_charges WHERE id=? AND tenant_id=?').bind(id, T).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     // ── LOAD STOPS (per-stop geocoded addresses for address-to-address IFTA) ──
@@ -1605,7 +1625,7 @@ export default {
           'SELECT * FROM load_stops WHERE tenant_id=? AND load_id=? ORDER BY sequence ASC, created_at ASC'
         ).bind(T, loadId).all();
         return json(results);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/load-stop' && request.method === 'POST') {
@@ -1631,7 +1651,7 @@ export default {
           lat, lon, b.appointment || '', geocodedAt,
         ).run();
         return json({ id, geocoded: !!geo, lat, lon });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/load-stop/') && path.split('/').length === 4 && request.method === 'PATCH') {
@@ -1668,7 +1688,7 @@ export default {
         values.push(id, T);
         await env.DB.prepare('UPDATE load_stops SET ' + fields.join(', ') + ' WHERE id=? AND tenant_id=?').bind(...values).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/load-stop/') && path.split('/').length === 4 && request.method === 'DELETE') {
@@ -1678,7 +1698,7 @@ export default {
         if (!row) return json({ error: 'Stop not found' }, 404);
         await env.DB.prepare('DELETE FROM load_stops WHERE id=? AND tenant_id=?').bind(id, T).run();
         return json({ ok: true });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     // ── RE-GEOCODE any stops that missed on first save (retry misses) ────────
@@ -1701,7 +1721,7 @@ export default {
           }
         }
         return json({ ok: true, attempted: results.length, fixed });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     // ── ESTIMATED IFTA (routed truck-profile miles, split by state) ──────
@@ -1720,7 +1740,7 @@ export default {
         const loadId = path.slice('/api/loads/'.length, -('/route-ifta'.length));
         const out = await handleRouteIfta(env, T, loadId);
         return json(out.body, out.status);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     // ── LIVE MANUAL IFTA (driver-entered state-line odometer chain) ──────
@@ -1733,7 +1753,7 @@ export default {
       try {
         const out = await handleIftaManual(env, T, ctx, request);
         return json(out.body, out.status);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path.startsWith('/api/ifta/') && request.method === 'GET') {
@@ -1742,7 +1762,7 @@ export default {
         if (!driver) return json({ error: 'Missing driver' }, 400);
         const out = await handleIftaSummary(env, T, driver, url);
         return json(out.body, out.status);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/contact' && request.method === 'POST') {
@@ -1759,7 +1779,7 @@ export default {
           VALUES (?,?,?,?,?,?,'open',datetime('now'))
         `).bind(id, T, ctx.user_id, ctx.driver_name || '', subject, message).run();
         return json({ ok: true, id });
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     if (path === '/api/contact' && request.method === 'GET') {
@@ -1769,7 +1789,7 @@ export default {
           'SELECT * FROM contact_messages WHERE tenant_id=? ORDER BY created_at DESC LIMIT 200'
         ).bind(T).all();
         return json(results);
-      } catch(e) { return json({ error: e.message }, 500); }
+      } catch(e) { return safeError(e); }
     }
 
     return json({ message: 'Load Ledger V5 API — dbappsystems.com' });
