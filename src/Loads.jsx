@@ -18,6 +18,18 @@
 //   saveToV5()/saveOneToV5() remain defined (no UI caller) so the admin V4->V5
 //   copy path stays available server-side; safe to delete if never needed.
 //
+// MISSING-INVOICE RECOVERY (2026-07-09):
+//   Some historical loads (e.g. the April-15 TIM loads entered as billed
+//   without an invoice-generation step) have NO stored PDF — invoice_url is
+//   NULL and both R2 buckets 404. VIEW INVOICE now detects this (null
+//   invoice_url) and, instead of a dead "Not found" tab, opens an in-card
+//   recovery panel with two options: UPLOAD SAVED PDF (posts the original
+//   scanned invoice — BOLs and all — to /api/upload-pdf, which stores it in
+//   R2 and sets invoice_url so it opens normally thereafter) or REGENERATE
+//   (rebuilds the invoice sheet from the load's own D1 data via
+//   generateInvoicePDF; accurate totals, but no BOL attachments since those
+//   images were never stored). No worker change — reuses /api/upload-pdf.
+//
 // WHITE-LABEL (DONE): this file no longer hardcodes a two-driver BRUCE/TIM
 //   model. The filter tabs, the all-time leaderboard, and per-driver card
 //   colors are now driven by the tenant's OWN driver list via useDrivers()
@@ -104,8 +116,10 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
   const [achReceivedAmt,setAchReceivedAmt]= useState('')
   const [savingV5,      setSavingV5]      = useState(null)   // loadId currently saving (or 'ALL')
   const [savedV5,       setSavedV5]       = useState({})     // { [loadId]: true } saved this session
+  const [missingInvoice,setMissingInvoice]= useState(null)   // localIdx whose stored PDF is missing (shows recover panel)
+  const [uploadingInv,  setUploadingInv]  = useState(false)  // true while a chosen PDF uploads to R2
 
-  // ── LOAD ACTIONS ──────────────────────────────────────
+  // ── LOAD ACTIONS ─────────────────────────
   async function patchLoad(load, localIdx, fields) {
     setUpdating(load.id || localIdx)
     try {
@@ -220,7 +234,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     try { await fetchLoads() } catch {}
   }
 
-  // ── EDIT HELPERS ──────────────────────────────────────
+  // ── EDIT HELPERS ─────────────────────────
   function openEdit(load, localIdx) {
     if (editIdx === localIdx) { setEditIdx(null); setEditData(null); return }
     setEditIdx(localIdx)
@@ -255,7 +269,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     return (base_pay + lumperTotal + incTotal + detention + pallets) - comdataTotal
   }
 
-  // ── CORRECTED PDF ─────────────────────────────────────
+  // ── CORRECTED PDF ─────────────────────────
   function generateCorrectedPDF(load, data, newNetPay) {
     const ts            = tenantSettings || {}
     const coName        = (ts.display_name && ts.display_name.trim())
@@ -467,7 +481,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     closeEdit()
   }
 
-  // ── HELPERS ───────────────────────────────────────────
+  // ── HELPERS ─────────────────────────
   function fmt(n)         { return '$' + (parseFloat(n)||0).toFixed(2) }
   function loadDate(load) { return load.delivery_date || load.date || load.created_at || null }
   function loadSortTime(load) {
@@ -478,7 +492,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
   // short-lived signed URL — no session token in the URL (no ?t= leak through
   // history/logs/Referer). The tab is opened SYNCHRONOUSLY (iOS Chrome popup
   // rule) then pointed at the signed link once the mint call resolves.
-  async function viewStoredInvoice(load) {
+  async function viewStoredInvoice(load, localIdx) {
     // NOTE: no 'noopener' in the features string — per spec that makes
     // window.open return NULL, so `win.location = full` below never ran and
     // the pre-opened tab sat on about:blank forever (the "blank invoice"
@@ -486,6 +500,18 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     // iOS Chrome popup blocker (gesture context lost across the async gap).
     // Open plainly to keep the handle, then sever opener manually for the
     // same security effect before navigating.
+    //
+    // MISSING-PDF RECOVERY: invoice_url is NULL for exactly the loads that
+    // never had a PDF stored (e.g. the April-15 migrated loads — no V5 R2
+    // object and no V4 fallback, so the signed serve 404s). Rather than dump
+    // the user on a "Not found" tab, we detect the null invoice_url up front,
+    // open no tab, and show an in-card recovery panel offering (1) upload the
+    // original saved PDF or (2) regenerate the invoice from the load's data.
+    if (!load.invoice_url) {
+      setMissingInvoice(localIdx)
+      showToast('No stored invoice for this load — recover below')
+      return
+    }
     const win = window.open('', '_blank')
     if (win) { try { win.opener = null } catch (_) { /* ignore */ } }
     try {
@@ -499,7 +525,8 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
         else window.open(full, '_blank', 'noopener,noreferrer')
       } else {
         if (win) win.close()
-        showToast('Could not open invoice — try again')
+        setMissingInvoice(localIdx)
+        showToast('No stored invoice for this load — recover below')
       }
     } catch (e) {
       if (win) win.close()
@@ -507,7 +534,43 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     }
   }
 
-  // ── COMPUTED ──────────────────────────────────────────
+  // Read a File as base64 (no data: prefix) for /api/upload-pdf.
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader()
+      r.onerror = () => reject(new Error('Could not read the file'))
+      r.onload  = () => resolve(String(r.result).split(',')[1] || '')
+      r.readAsDataURL(file)
+    })
+  }
+
+  // Upload a user-chosen PDF (the original saved invoice with BOL pages) into
+  // R2 for a load that has none. Reuses the existing /api/upload-pdf endpoint,
+  // which writes {tenant}/invoices/{loadId}.pdf and sets invoice_url. After
+  // success the load opens normally via the stored path.
+  async function uploadMissingInvoice(load, file) {
+    if (!file) return
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '')
+    if (!isPdf) { showToast('Please choose a PDF file'); return }
+    setUploadingInv(true)
+    showToast('Uploading invoice PDF...')
+    try {
+      const base64 = await fileToBase64(file)
+      await apiClient('/api/upload-pdf', {
+        method: 'POST',
+        json:   { base64, loadId: load.id, filename: (load.load_number || 'invoice') + '.pdf' },
+      })
+      try { await fetchLoads() } catch {}
+      setMissingInvoice(null)
+      showToast('Invoice uploaded — open it with VIEW INVOICE')
+    } catch (e) {
+      showToast('Upload failed: ' + (e.message || 'try again'))
+    } finally {
+      setUploadingInv(false)
+    }
+  }
+
+  // ── COMPUTED ─────────────────────────
   const leaderboard = driverNames.map(name => {
     const dLoads = loads.filter(l => l.driver === name)
     const total  = dLoads.reduce((s,l) => s + (parseFloat(l.netPay||l.net_pay)||0), 0)
@@ -531,7 +594,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     fontSize:14, fontFamily:'var(--font-body)', boxSizing:'border-box',
   }
 
-  // ── EMPTY STATE ───────────────────────────────────────
+  // ── EMPTY STATE ─────────────────────────
   if (loads.length === 0) {
     return (
       <div className="empty-state">
@@ -541,7 +604,7 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
     )
   }
 
-  // ── RENDER ─────────────────────────────────────────────
+  // ── RENDER ──────────────────────────
   const tabValues = ['all', ...driverNames]
   return (
     <div>
@@ -685,7 +748,39 @@ export default function Loads({ loads, setLoads, driver, showToast, fetchLoads, 
                   billing time. Worker serves the V5 R2 PDF, and for loads merged
                   from V4 it transparently falls back to the V4 stored PDF — same
                   button either way. Unsaved in-memory loads regenerate locally. */}
-              <button onClick={() => load.id ? viewStoredInvoice(load) : generateInvoicePDF(load)} style={{ display:'block', width:'100%', marginTop:10, padding:'10px 0', borderRadius:8, background:'transparent', border:'1px solid var(--amber)', color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, textAlign:'center', cursor:'pointer', letterSpacing:'0.04em' }}>VIEW INVOICE</button>
+              <button onClick={() => load.id ? viewStoredInvoice(load, localIdx) : generateInvoicePDF(load)} style={{ display:'block', width:'100%', marginTop:10, padding:'10px 0', borderRadius:8, background:'transparent', border:'1px solid var(--amber)', color:'var(--amber)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:13, textAlign:'center', cursor:'pointer', letterSpacing:'0.04em' }}>VIEW INVOICE</button>
+
+              {/* MISSING-INVOICE RECOVERY — shown only when VIEW INVOICE found
+                  no stored PDF for this saved load. Two ways to fix it:
+                  (1) upload the original saved PDF (restores the real scan with
+                  BOL pages into R2), or (2) regenerate the invoice sheet from
+                  the load's own data (accurate totals, no BOL attachments). */}
+              {missingInvoice === localIdx && (
+                <div style={{ marginTop:10, padding:12, background:'#fff8e1', borderRadius:8, border:'1px solid var(--amber)' }}>
+                  <div style={{ fontSize:12, color:'#8a6d00', fontFamily:'var(--font-head)', fontWeight:700, marginBottom:6 }}>NO STORED INVOICE FOR THIS LOAD</div>
+                  <div style={{ fontSize:11, color:'#7a6a3a', marginBottom:10, lineHeight:1.4 }}>
+                    This older load has no saved PDF on file. Upload the original saved invoice (keeps the BOL pages), or regenerate the invoice sheet from this load's data.
+                  </div>
+                  <input id={'invup-' + localIdx} type="file" accept="application/pdf" style={{ display:'none' }}
+                    onChange={e => { const f = e.target.files && e.target.files[0]; e.target.value=''; uploadMissingInvoice(load, f) }} />
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                    <button disabled={uploadingInv}
+                      onClick={() => document.getElementById('invup-' + localIdx).click()}
+                      style={{ padding:'10px 0', borderRadius:8, border:'none', background:uploadingInv?'#ccc':'var(--amber)', color:'var(--navy)', fontFamily:'var(--font-head)', fontWeight:900, fontSize:12, cursor:'pointer', letterSpacing:'0.03em' }}>
+                      {uploadingInv ? 'UPLOADING...' : 'UPLOAD SAVED PDF'}
+                    </button>
+                    <button disabled={uploadingInv}
+                      onClick={() => { generateInvoicePDF(load); setMissingInvoice(null) }}
+                      style={{ padding:'10px 0', borderRadius:8, border:'1px solid var(--amber)', background:'transparent', color:'#8a6d00', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, cursor:'pointer', letterSpacing:'0.03em' }}>
+                      REGENERATE
+                    </button>
+                  </div>
+                  <button onClick={() => setMissingInvoice(null)}
+                    style={{ width:'100%', marginTop:8, padding:'6px 0', borderRadius:6, border:'none', background:'transparent', color:'#999', fontSize:11, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>
+                    DISMISS
+                  </button>
+                </div>
+              )}
               {/* Action buttons */}
               <div style={{ display:'flex', gap:8, marginTop:10, flexWrap:'wrap' }}>
                 {load.status !== 'billed' && load.status !== 'paid' && (
