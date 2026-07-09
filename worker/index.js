@@ -25,11 +25,54 @@ function json(data, status = 200) {
 
 const SESSION_TTL_HOURS = 12;
 
-async function hashPassword(password, salt) {
+// Password hashing. Two formats are supported so upgrades never lock anyone out:
+//   - Legacy salted SHA-256: bare 64-hex string (no prefix). Verified, then
+//     transparently re-hashed to PBKDF2 on the user's next successful login.
+//   - PBKDF2 (current): 'pbkdf2$<iterations>$<hex>'. Slow-by-design KDF so a
+//     leaked users table can't be brute-forced at SHA-256 speed. Iteration count
+//     is embedded so it can be raised later without a schema change or migration.
+const PBKDF2_ITERATIONS = 210000; // OWASP-recommended floor for PBKDF2-SHA256.
+
+async function pbkdf2Hash(password, salt, iterations = PBKDF2_ITERATIONS) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveBits']
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: enc.encode(salt), iterations, hash: 'SHA-256' },
+    keyMaterial, 256
+  );
+  return [...new Uint8Array(bits)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Legacy verifier — only used to check an existing bare-SHA-256 hash before
+// re-hashing it to PBKDF2. Never used to WRITE a new hash.
+async function legacySha256Hash(password, salt) {
   const data = new TextEncoder().encode(salt + ':' + password);
   const digest = await crypto.subtle.digest('SHA-256', data);
   return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
+
+// Produce the current-format hash. Callers that store a password use this.
+async function makePasswordHash(password, salt) {
+  return 'pbkdf2$' + PBKDF2_ITERATIONS + '$' + (await pbkdf2Hash(password, salt));
+}
+
+// Verify a submitted password against a stored hash of either format.
+// Returns { ok, needsUpgrade }. needsUpgrade=true means the stored hash is the
+// legacy SHA-256 format (or a lower iteration count) and should be rewritten.
+async function verifyPassword(password, salt, stored) {
+  if (typeof stored === 'string' && stored.startsWith('pbkdf2$')) {
+    const parts = stored.split('$'); // ['pbkdf2', iterations, hex]
+    const iters = parseInt(parts[1], 10) || PBKDF2_ITERATIONS;
+    const ok = (await pbkdf2Hash(password, salt, iters)) === parts[2];
+    return { ok, needsUpgrade: ok && iters < PBKDF2_ITERATIONS };
+  }
+  // Legacy bare SHA-256.
+  const ok = (await legacySha256Hash(password, salt)) === stored;
+  return { ok, needsUpgrade: ok };
+}
+
 function randomHex(bytes) {
   const a = crypto.getRandomValues(new Uint8Array(bytes));
   return [...a].map(b => b.toString(16).padStart(2, '0')).join('');
@@ -201,12 +244,21 @@ export default {
 
         let ok = false;
         if (user.salt) {
-          ok = (await hashPassword(password, user.salt)) === user.password;
+          // User has a salt: stored hash is either legacy SHA-256 or PBKDF2.
+          const v = await verifyPassword(password, user.salt, user.password);
+          ok = v.ok;
+          if (ok && v.needsUpgrade) {
+            // Transparently upgrade the stored hash to current PBKDF2 format.
+            const newHash = await makePasswordHash(password, user.salt);
+            await env.DB.prepare('UPDATE users SET password=? WHERE id=?')
+              .bind(newHash, user.id).run();
+          }
         } else {
+          // No salt: legacy plaintext. Verify, then upgrade straight to PBKDF2.
           ok = (user.password === password);
           if (ok) {
             const salt = randomHex(16);
-            const hash = await hashPassword(password, salt);
+            const hash = await makePasswordHash(password, salt);
             await env.DB.prepare('UPDATE users SET password=?, salt=? WHERE id=?')
               .bind(hash, salt, user.id).run();
           }
