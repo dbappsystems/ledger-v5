@@ -87,7 +87,7 @@ const SESSION_TTL_HOURS = 12;
 //   - PBKDF2 (current): 'pbkdf2$<iterations>$<hex>'. Slow-by-design KDF so a
 //     leaked users table can't be brute-forced at SHA-256 speed. Iteration count
 //     is embedded so it can be raised later without a schema change or migration.
-const PBKDF2_ITERATIONS = 210000; // OWASP-recommended floor for PBKDF2-SHA256.
+const PBKDF2_ITERATIONS = 100000; // Cloudflare Workers HARD-CAPS PBKDF2 at 100k; >100k throws NotSupportedError. Do not raise.
 
 async function pbkdf2Hash(password, salt, iterations = PBKDF2_ITERATIONS) {
   const enc = new TextEncoder();
