@@ -527,7 +527,7 @@ export default function App() {
           <RateToggle />
         </div>
         {!isBookkeeper && tab === 'loads' && (loadsSubView === 'list' || loadsSubView === 'ratecon') && (
-          <div style={{ position:'absolute', left:'50%', transform:'translateX(-50%)', display:'flex', alignItems:'center' }}>
+          <div style={{ position:'absolute', left:'50%', top:'50%', transform:'translate(-50%,-50%)', zIndex:10, display:'flex', alignItems:'center' }}>
             <IftaDailyLog driver={activeDriver} showToast={showToast} inline />
           </div>
         )}
