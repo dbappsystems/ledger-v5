@@ -10,11 +10,50 @@ import { handleRatecons } from './ratecons.js';
 import { handleSettlementPayments } from './payments.js';
 import { handleSignedMint, handleSignedServe } from './signed.js';
 
-const CORS = {
-  'Access-Control-Allow-Origin':  '*',
+// CORS. Auth is a Bearer token (not a cookie), so the main job of this
+// allow-list is to stop arbitrary third-party WEB pages from scripting the API
+// with a token in a victim's browser — not to gate server-to-server calls.
+//   - Method/header set is static and shared (CORS_BASE).
+//   - Allow-Origin is decided per request by corsHeaders(): echo the caller's
+//     Origin only if it is on the allow-list, else fall back to the production
+//     origin. Requests with NO Origin header (same-origin app calls, <img>
+//     asset loads, curl, server-to-server) are unaffected — they never trip
+//     CORS — so nothing that works today breaks.
+const PROD_ORIGIN = 'https://loadledgers.com';
+// Exact origins that may call the API from a browser. loadledgers.com is the
+// only production domain serving V5. *.pages.dev preview deploys are matched by
+// pattern below so test builds keep working without hardcoding a build hash.
+const CORS_ALLOW = new Set([
+  'https://loadledgers.com',
+]);
+function isAllowedOrigin(origin) {
+  if (!origin) return false;
+  if (CORS_ALLOW.has(origin)) return true;
+  // Cloudflare Pages preview/prod project domains: https://<anything>.pages.dev
+  try {
+    const u = new URL(origin);
+    if (u.protocol === 'https:' && u.hostname.endsWith('.pages.dev')) return true;
+  } catch (_) { /* malformed Origin -> not allowed */ }
+  return false;
+}
+const CORS_BASE = {
   'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+  'Vary': 'Origin',
 };
+// Build the response CORS headers for a given request. Echoes an allow-listed
+// Origin; otherwise returns the production origin (which simply means a
+// disallowed browser origin won't be granted access, while non-browser callers
+// that send no Origin are never affected).
+function corsHeaders(request) {
+  const origin = request && request.headers ? request.headers.get('Origin') : '';
+  const allow = isAllowedOrigin(origin) ? origin : PROD_ORIGIN;
+  return { ...CORS_BASE, 'Access-Control-Allow-Origin': allow };
+}
+// Back-compat shim: existing code spreads `...CORS` in ~9 places. Keep that
+// working by making CORS the static base with the production origin. Per-request
+// echoing happens in json()/OPTIONS/asset serves via corsHeaders(request).
+const CORS = { ...CORS_BASE, 'Access-Control-Allow-Origin': PROD_ORIGIN };
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -240,7 +279,10 @@ export default {
     const path = url.pathname;
 
     if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: CORS });
+      // Preflight is the real browser gate: echo an allow-listed Origin here so
+      // loadledgers.com and *.pages.dev are permitted and other web origins are
+      // not. Non-browser callers never send a preflight, so they're unaffected.
+      return new Response(null, { headers: corsHeaders(request) });
     }
     // Signed asset serve is public-by-token (no session): the short-lived,
     // non-guessable token IS the permission. Dispatched BEFORE requireTenant so
