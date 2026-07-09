@@ -1,5 +1,5 @@
 # worker/wrangler.toml
-# (c) dbappsystems.com | daddyboyapps.com
+# (c) dbappsystems.com 
 # Load Ledger V5 — Cloudflare Worker config
 #
 # BINDINGS — these names are what worker/index.js reads. Do not rename them:
@@ -39,6 +39,14 @@ bucket_name = "load-ledger-v5-files"
 [[r2_buckets]]
 binding = "R2_V4"                 # worker reads env.R2_V4
 bucket_name = "load-ledger-files"
+
+# -- KV: login rate-limiting counters (fail-open) -----------------------------
+# Per IP+email failed-login counters for brute-force / credential-stuffing
+# defense in worker/index.js. Fail-open: if this binding is ever absent, login
+# still works — the limiter simply no-ops. Namespace: ledger-v5-ratelimit.
+[[kv_namespaces]]
+binding = "RL_KV"                 # worker reads env.RL_KV
+id = "cec91a440f6445a08387bb586bd10229"
 
 # -- SECRETS (NOT stored here) ------------------------------------------------
 # Set once in the dashboard or via:  wrangler secret put ANTHROPIC_API_KEY
