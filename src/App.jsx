@@ -36,10 +36,11 @@
 // list loads, so nothing ever renders with a null driver. A plain 'driver'
 // role is untouched: activeDriver === driver for them, exactly as before.
 //
-// LIVE STATE MILES (2026-07-07): a floating LOG STATE MILES button
-// (IftaDailyLog.jsx) is rendered on the Loads list for drivers. It logs the
-// driver's own odometer at each state line (raw daily chain) via POST
-// /api/ifta/manual, writing the FACT record beside the routed IFTA estimate.
+// LIVE STATE MILES (2026-07-07): a LOG STATE MILES button (IftaDailyLog.jsx) is
+// rendered for drivers on the Loads pages. It logs the driver's own odometer at
+// each state line (raw daily chain) via POST /api/ifta/manual, writing the FACT
+// record beside the routed IFTA estimate. Placed inline in the header (centered
+// over the LOADS area) via IftaDailyLog's `inline` prop.
 
 import { useState, useEffect } from 'react'
 import RateCon          from './RateCon.jsx'
@@ -520,11 +521,16 @@ export default function App() {
       {renderCredAlert()}
 
       {/* HEADER */}
-      <div className="app-header">
+      <div className="app-header" style={{ position:'relative' }}>
         <div style={{ display:'flex', alignItems:'center', minWidth:0 }}>
           <AppLogo />
           <RateToggle />
         </div>
+        {!isBookkeeper && tab === 'loads' && (loadsSubView === 'list' || loadsSubView === 'ratecon') && (
+          <div style={{ position:'absolute', left:'50%', transform:'translateX(-50%)', display:'flex', alignItems:'center' }}>
+            <IftaDailyLog driver={activeDriver} showToast={showToast} inline />
+          </div>
+        )}
         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
           <ThemeToggle />
           <div style={{ fontSize:12, color:'var(--grey)', fontFamily:'var(--font-head)' }}>{driver}</div>
@@ -661,15 +667,6 @@ export default function App() {
         </button>
 
       </div>
-
-      {/* LIVE state-line odometer log — floating button on the Loads pages:
-          the driver's sign-in landing page (rate con scan) AND the loads list.
-          Logs the driver's own odometer at each state line as the FACT record
-          beside the routed IFTA estimate. Hidden inside invoice + queue flows
-          so it never covers their action buttons. */}
-      {!isBookkeeper && tab === 'loads' && (loadsSubView === 'list' || loadsSubView === 'ratecon') && (
-        <IftaDailyLog driver={activeDriver} showToast={showToast} />
-      )}
 
       {/* In-app feedback bubble — logged-in only, floats above the tab bar,
           posts to the DB (no email). */}
