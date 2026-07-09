@@ -55,10 +55,10 @@ function corsHeaders(request) {
 // echoing happens in json()/OPTIONS/asset serves via corsHeaders(request).
 const CORS = { ...CORS_BASE, 'Access-Control-Allow-Origin': PROD_ORIGIN };
 
-function json(data, status = 200) {
+function json(data, status = 200, extraHeaders = null) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...CORS, 'Content-Type': 'application/json' },
+    headers: { ...CORS, 'Content-Type': 'application/json', ...(extraHeaders || {}) },
   });
 }
 
@@ -132,6 +132,65 @@ async function verifyPassword(password, salt, stored) {
 function randomHex(bytes) {
   const a = crypto.getRandomValues(new Uint8Array(bytes));
   return [...a].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ── LOGIN RATE LIMITING (fail-open, per IP+email) ────────────────────────────
+// Brute-force / credential-stuffing defense at the application layer. The API
+// lives on *.workers.dev (not a zone we can attach edge WAF rules to), so the
+// limit is enforced HERE, where we already have the request. Backed by a KV
+// namespace bound as env.RL_KV.
+//
+// SAFETY: fail-OPEN. If env.RL_KV is missing (binding not wired yet) or KV
+// throws, every function below no-ops and login proceeds normally. This control
+// can only ever ADD protection — it can never lock out a real user or break
+// login if the binding is absent. That is the deliberate tradeoff for a
+// security add-on layered onto a live app.
+//
+// Policy: count only FAILED attempts, keyed by client IP + email. 8 failures in
+// a 15-minute window blocks further attempts for 15 minutes. A SUCCESSFUL login
+// clears the counter, so a human who mistypes then gets it right is never
+// penalized.
+const RL_MAX_FAILS   = 8;      // failures allowed within the window
+const RL_WINDOW_SECS = 900;    // 15 min window / block duration
+
+function rlKey(ip, email) {
+  // Normalize so 'A@x.com' and 'a@x.com' share a bucket; IP scopes it.
+  return 'login:' + ip + ':' + String(email || '').trim().toLowerCase();
+}
+
+// Returns { blocked:boolean, retryAfter:number }. Never throws.
+async function rlCheck(env, ip, email) {
+  try {
+    if (!env.RL_KV) return { blocked: false, retryAfter: 0 };
+    const raw = await env.RL_KV.get(rlKey(ip, email));
+    if (!raw) return { blocked: false, retryAfter: 0 };
+    const n = parseInt(raw, 10) || 0;
+    return { blocked: n >= RL_MAX_FAILS, retryAfter: RL_WINDOW_SECS };
+  } catch (_) {
+    return { blocked: false, retryAfter: 0 }; // fail open
+  }
+}
+
+// Increment the failure counter, preserving the original window's TTL so the
+// block is a true rolling 15-min window (not extended on every attempt). Never
+// throws.
+async function rlRecordFail(env, ip, email) {
+  try {
+    if (!env.RL_KV) return;
+    const key = rlKey(ip, email);
+    const cur = parseInt((await env.RL_KV.get(key)) || '0', 10) || 0;
+    const next = String(cur + 1);
+    // First failure sets the TTL window; subsequent ones keep counting within it.
+    await env.RL_KV.put(key, next, { expirationTtl: RL_WINDOW_SECS });
+  } catch (_) { /* fail open */ }
+}
+
+// Clear the counter on a successful login. Never throws.
+async function rlClear(env, ip, email) {
+  try {
+    if (!env.RL_KV) return;
+    await env.RL_KV.delete(rlKey(ip, email));
+  } catch (_) { /* fail open */ }
 }
 
 class HttpError extends Error {
@@ -296,10 +355,25 @@ export default {
       try {
         const { email, password } = await request.json();
         if (!email || !password) return json({ error: 'Missing email or password' }, 400);
+
+        // Rate-limit BEFORE the DB lookup so a blocked attacker costs nothing.
+        // CF-Connecting-IP is set by Cloudflare and cannot be spoofed by the
+        // client; fall back to a constant only if absent (then the limit is
+        // global for that email, still safe).
+        const clientIp = request.headers.get('CF-Connecting-IP') || 'noip';
+        const rl = await rlCheck(env, clientIp, email);
+        if (rl.blocked) {
+          return json(
+            { error: 'Too many failed login attempts. Please wait a few minutes and try again.' },
+            429,
+            { 'Retry-After': String(rl.retryAfter) }
+          );
+        }
+
         const user = await env.DB.prepare(
           'SELECT id, tenant_id, driver_name, role, password, salt FROM users WHERE LOWER(email) = LOWER(?)'
         ).bind(email.trim()).first();
-        if (!user) return json({ error: 'Invalid email or password' }, 401);
+        if (!user) { await rlRecordFail(env, clientIp, email); return json({ error: 'Invalid email or password' }, 401); }
 
         let ok = false;
         if (user.salt) {
@@ -322,8 +396,11 @@ export default {
               .bind(hash, salt, user.id).run();
           }
         }
-        if (!ok) return json({ error: 'Invalid email or password' }, 401);
+        if (!ok) { await rlRecordFail(env, clientIp, email); return json({ error: 'Invalid email or password' }, 401); }
         if (!user.tenant_id) return json({ error: 'User has no tenant assigned' }, 403);
+
+        // Successful auth: clear this IP+email's failure counter.
+        await rlClear(env, clientIp, email);
 
         const token = randomHex(32);
         const expires = new Date(Date.now() + SESSION_TTL_HOURS * 3600 * 1000).toISOString();
