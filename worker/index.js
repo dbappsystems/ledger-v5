@@ -9,6 +9,7 @@ import { handleIftaManual } from './ifta_manual.js';
 import { handleRatecons } from './ratecons.js';
 import { handleSettlementPayments } from './payments.js';
 import { handleSignedMint, handleSignedServe } from './signed.js';
+import { handleGl } from './gl.js';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -278,6 +279,7 @@ export default {
     // so ownership is re-verified against ctx before a token is issued.
     const signedMint = await handleSignedMint(request, env, ctx, T, url);
     if (signedMint) return signedMint;
+    if (path.startsWith('/api/gl/')) return handleGl(request, env, { tenantId: T });
 
     if (path === '/api/ocr' && request.method === 'POST') {
       try {
