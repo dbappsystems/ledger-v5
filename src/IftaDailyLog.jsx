@@ -28,6 +28,8 @@
 //
 // Floating-button pattern matches <Feedback/>: fixed, above the tab bar, only
 // rendered inside the logged-in app. Rendered by App.jsx on the Loads list.
+// An `inline` prop switches off the fixed positioning so the same button can
+// sit inside the header row instead of floating.
 
 import { useState } from 'react'
 import { api as apiClient } from './api.js'
@@ -48,7 +50,7 @@ function todayIso() {
   return d.getFullYear() + '-' + mm + '-' + dd
 }
 
-export default function IftaDailyLog({ driver, showToast }) {
+export default function IftaDailyLog({ driver, showToast, inline = false }) {
   const [open,    setOpen]    = useState(false)
   const [date,    setDate]    = useState(todayIso())
   const [start,   setStart]   = useState('')
@@ -139,19 +141,22 @@ export default function IftaDailyLog({ driver, showToast }) {
 
   return (
     <>
-      {/* FLOATING BUTTON — sits above the tab bar, left of the feedback bubble */}
+      {/* BUTTON — floating by default; inline when the `inline` prop is set */}
       {!open && (
         <button
           onClick={() => setOpen(true)}
           title="Log state-line odometer readings"
           style={{
-            position:'fixed', right:16, bottom:150, zIndex:1400,
+            ...(inline
+              ? { position:'static' }
+              : { position:'fixed', right:16, bottom:150, zIndex:1400 }),
             display:'flex', alignItems:'center', gap:8,
             padding:'12px 16px', borderRadius:28, border:'none',
             background:'var(--amber)', color:'#0A1628',
             fontFamily:'var(--font-head)', fontWeight:900, fontSize:12,
             letterSpacing:'0.05em', cursor:'pointer',
             boxShadow:'0 4px 14px rgba(0,0,0,0.4)',
+            whiteSpace:'nowrap',
           }}
         >
           <span style={{ fontSize:16, lineHeight:1 }}>{'\uD83D\uDCCD'}</span>
