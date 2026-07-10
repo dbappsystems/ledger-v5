@@ -383,8 +383,8 @@ export default {
           if (ok && v.needsUpgrade) {
             // Transparently upgrade the stored hash to current PBKDF2 format.
             const newHash = await makePasswordHash(password, user.salt);
-            await env.DB.prepare('UPDATE users SET password=? WHERE id=?')
-              .bind(newHash, user.id).run();
+            await env.DB.prepare('UPDATE users SET password=? WHERE id=? AND tenant_id=?')
+              .bind(newHash, user.id, user.tenant_id).run();
           }
         } else {
           // No salt: legacy plaintext. Verify, then upgrade straight to PBKDF2.
@@ -392,8 +392,8 @@ export default {
           if (ok) {
             const salt = randomHex(16);
             const hash = await makePasswordHash(password, salt);
-            await env.DB.prepare('UPDATE users SET password=?, salt=? WHERE id=?')
-              .bind(hash, salt, user.id).run();
+            await env.DB.prepare('UPDATE users SET password=?, salt=? WHERE id=? AND tenant_id=?')
+              .bind(hash, salt, user.id, user.tenant_id).run();
           }
         }
         if (!ok) { await rlRecordFail(env, clientIp, email); return json({ error: 'Invalid email or password' }, 401); }
