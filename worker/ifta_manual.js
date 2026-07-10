@@ -1,5 +1,5 @@
 // worker/ifta_manual.js
-// (c) dbappsystems.com | daddyboyapps.com
+// (c) dbappsystems.com 
 // Load Ledger V5 — LIVE driver-entered IFTA state-line odometer chains.
 //
 // WHAT THIS DOES
