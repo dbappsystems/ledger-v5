@@ -15,7 +15,7 @@ here conflicts with the live file, the live file wins — re-grep and update thi
 
 1. Answer from memory + this file first. Do NOT list directories to rediscover
    the structure — the structure is below.
-2. `worker/index.js` is ~97KB. NEVER fetch it whole. `grep` the raw URL for the
+2. `worker/index.js` is ~106KB. NEVER fetch it whole. `grep` the raw URL for the
    route, then read only that line range.
 3. For any file >20KB: grep first, read the region, never fetch in full.
 4. Load a tool once. Do not re-run tool_search for a tool already loaded.
@@ -71,25 +71,30 @@ Everything below requires tenant (`requireTenant`).
 | /api/carrier-advance(s) | GET/POST/PATCH/DELETE | 1393/1403/1426/1452 |
 | /api/recurring-charge(s) | GET/POST/PATCH/DELETE | 1468/1478/1504/1529 |
 | /api/load-stop(s) | GET/POST/PATCH/DELETE + /geocode | 1547/1559/1585/1622/1633 |
-| /api/ifta/manual | POST | 1680 |
-| /api/ifta/:id | GET | 1687 |
+| /api/loads/:id/route-ifta | POST | (opts: round_id, start_odometer) |
+| /api/ifta/manual | POST | fact chain; accepts round_id |
+| /api/ifta/round/open | POST | opens round (depart_odo = FACT) |
+| /api/ifta/round/close | POST | "going home" → est. home leg |
+| /api/ifta/round/finalize | POST | arrival_odo = FACT → reconcile+close |
+| /api/ifta/:id | GET | summary; hides estimate when fact exists |
 | /api/contact | POST/GET | 1696/1713 |
 
 Sub-handlers returning early (own their paths): `worker/ratecons.js` (rate cons),
 `worker/payments.js` (settlement-payment FIFO), `worker/signed.js` (signed mint).
 Other worker modules: `gl.js` (chart of accounts), `ifta.js` (routed IFTA
-estimate) + `ifta_manual.js` (driver odometer-chain fact side), `states.js`
-(state geometry).
+estimate + home-anchored round odometer chain) + `ifta_manual.js` (driver
+odometer-chain FACT side + round open/close/finalize lifecycle), `states.js`
+(state geometry). IFTA round model spec: `docs/HANDOFF-IFTA-ROUNDS.md`.
 
 ---
 
-## LIVE D1 TABLES (28, verified)
+## LIVE D1 TABLES (29, verified)
 
 _cf_KV · asset_payments · assets · badges · brokers · carrier_advances ·
 contact_messages · driver_credentials · drivers · escrow_payments · expenses ·
-fuel_entries · gl_accounts · ifta_miles · ifta_segments · invoices · load_stops ·
-loads · maintenance_ledger · rate_confirmations · recurring_charges · sessions ·
-settlement_payments · signed_assets · signup_requests · tenants · users
+fuel_entries · gl_accounts · ifta_miles · ifta_rounds · ifta_segments · invoices ·
+load_stops · loads · maintenance_ledger · rate_confirmations · recurring_charges ·
+sessions · settlement_payments · signed_assets · signup_requests · tenants · users
 (+ sqlite_sequence)
 
 Key gotchas:
@@ -100,6 +105,22 @@ Key gotchas:
 - `ifta_miles.entry_date` = MM/DD/YYYY · `fuel_entries.entry_date` = YYYY-MM-DD.
 - D1 rejects multi-statement SQL (multiple ALTER / UNION ALL in one call). One
   statement per call.
+
+**IFTA home-anchored rounds (Path C — spec: `docs/HANDOFF-IFTA-ROUNDS.md`):**
+- A ROUND = home → loads → home. Opens on `ifta_rounds.depart_odo` (FACT, driver
+  enters odometer leaving home), closes on `arrival_odo` (FACT, arriving home).
+  Everything between is forward-derived: anchor + routed miles.
+- `drivers.home_lat` / `home_lon` added; Tim (`ten_edgerton`/`driver_tim`) seeded
+  38.885871 / -90.130106. `ifta.js` reads driver home; DEFAULT_HOME is a labeled
+  fallback only.
+- `ifta_segments.round_id` + `ifta_miles.round_id` (nullable) link rows to a round.
+- `ifta_segments.source`: 'routed-estimate' (map estimate) vs 'driver-manual'
+  (FACT). Summary HIDES a load's estimate segments once it has any fact segment.
+- Integrity: per chain `sum(seg miles) === last-first odo`; per round
+  `sum(round seg miles) === arrival_odo - depart_odo` (to 0.1 mi). Finalize scales
+  ONLY estimate segments to absorb drift — never touches driver-manual.
+- Promotion estimate→fact reuses the single write path `POST /api/ifta/manual`
+  (pre-fill the manual IVDR form from the estimate, driver confirms).
 
 ---
 
