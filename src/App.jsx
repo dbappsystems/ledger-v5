@@ -58,6 +58,7 @@ import SettlementReport from './SettlementReport.jsx'
 import BookkeeperProfile from './BookkeeperProfile.jsx'
 import Feedback         from './Feedback.jsx'
 import IftaDailyLog     from './IftaDailyLog.jsx'
+import DriverQuickRef   from './DriverQuickRef.jsx'
 import { useDrivers }   from './useDrivers.js'
 
 import { api, login as apiLogin, logout as apiLogout, getSession } from './api.js'
@@ -83,6 +84,7 @@ export default function App() {
   const [tab,             setTab]             = useState('loads')
   const [loadsSubView,    setLoadsSubView]    = useState('list')
   const [driver,          setDriver]          = useState(null)
+  const [quickRefOpen,    setQuickRefOpen]    = useState(false)
   const [role,            setRole]            = useState(null)
   const [viewDriver,      setViewDriver]      = useState(null)
   const [load,            setLoad]            = useState(newLoad())
@@ -551,6 +553,15 @@ export default function App() {
             {driverNames.map(d => (
               <button key={d} onClick={() => setViewDriver(d)} style={{ padding:'7px 16px', borderRadius:8, border:'none', background: activeDriver === d ? 'var(--amber)' : 'var(--navy3)', color: activeDriver === d ? '#0A1628' : 'var(--grey)', fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer' }}>{d}</button>
             ))}
+            <button onClick={() => setQuickRefOpen(true)} title="Quick reference" style={{ padding:'7px 14px', borderRadius:8, border:'1px solid var(--amber)', background:'transparent', color:'var(--amber)', fontSize:12, fontFamily:'var(--font-head)', fontWeight:700, cursor:'pointer', whiteSpace:'nowrap' }}>⚡ QUICK REF</button>
+            {quickRefOpen && (
+              <DriverQuickRef
+                driver={activeDriver}
+                loads={billableLoads}
+                ownerCutPct={ownerCutPct}
+                onClose={() => setQuickRefOpen(false)}
+              />
+            )}
           </div>
         ) : (
           <div style={{ fontSize:11, color:'var(--grey)', fontFamily:'var(--font-head)', letterSpacing:'0.06em', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', flexShrink:1, minWidth:0 }}>LOGGED IN AS {driver}</div>
