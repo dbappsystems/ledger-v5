@@ -12,8 +12,8 @@
 //
 // MATH SOURCE (single source of truth — NO re-derivation of the net):
 //   computeRunningBalance() in src/settlementMath.js. The card reads its fields;
-//   it never invents a split, a fee, or a net. The net shown here is the SAME
-//   stillOwedRaw the settlement report and FIFO ledger use, to the penny.
+//   it never invents a split, a fee, or a net. The settlement net shown here is
+//   the SAME stillOwedRaw the settlement report and FIFO ledger use, to the penny.
 //
 //   EARNED   = allGrossPay + allReimb
 //              (allGrossPay already = base*(1-cut) + detention, per calcPay;
@@ -27,17 +27,19 @@
 //     Carrier advances ........ allCarrierAdvance (direct carrier->driver loans, unrepaid)
 //     Cash / check ............ allSettlementPayments
 //
-//   NET      = EARNED - PROVIDED = stillOwedRaw
-//     > 0  -> carrier still owes the driver
-//     < 0  -> driver owes the carrier (over-advanced)
-//     ~0  -> settled
-//
-//   IDENTITY (holds to the penny): stillOwedRaw === EARNED - PROVIDED, because
-//   computeRunningBalance defines
-//     stillOwedRaw = allGrossPay - allAdvKept + allReimb - allFleetFuel
-//                    - allAchDisbursed - allEscrow - allCarrierAdvance
-//                    - allSettlementPayments
-//   which rearranges to (allGrossPay + allReimb) - (sum of all provided channels).
+//   TWO LEDGERS, ONE COMBINED NET (Daddyboy rule 2026-07):
+//     settlementNet = stillOwedRaw  (load settlement; escrow counts as PROVIDED)
+//     fundPosition  = escrowPaidIn - repairsFinanced  (repair fund; mirrors
+//                     Maintenance.jsx fundPosition = escrowPaymentsTotal - totalFinanced,
+//                     financed = maintenance rows paid_by CARRIER/EDGERTON)
+//     combinedNet   = settlementNet + fundPosition
+//   Adding is valid — NO double-count of escrow: escrow reduces the settlement
+//   side (money provided to the driver) AND offsets the repair side (money the
+//   driver paid toward repairs). Opposite directions on the same dollars = correct
+//   double-entry. Proven to the penny: settlementNet + fundPosition ==
+//   (loads owed to driver ex-escrow) - (repairs financed).
+//     combinedNet > 0 -> carrier still owes the driver
+//     combinedNet < 0 -> driver owes the carrier
 //
 // WHITE-LABEL: no driver or carrier names hardcoded. Detention/lumper detail is
 // folded into EARNED, not shown as line items — this is a spot-check, not a stub.
@@ -61,6 +63,7 @@ export default function DriverQuickRef({
   const [payments, setPayments] = useState(null);   // settlement_payments rows
   const [fuel,     setFuel]     = useState(null);   // fuel_entries rows
   const [escrow,   setEscrow]   = useState(null);   // escrow total (number)
+  const [maint,    setMaint]    = useState(null);   // maintenance_ledger rows
   const [err, setErr] = useState('');
 
   const dn = String(driver || '').toUpperCase();
@@ -72,18 +75,20 @@ export default function DriverQuickRef({
     let live = true;
     (async () => {
       try {
-        const [adv, pay, fu, esc] = await Promise.all([
+        const [adv, pay, fu, esc, mn] = await Promise.all([
           api('/api/carrier-advances/' + encodeURIComponent(dn)).catch(() => []),
           api('/api/settlement-payments/' + encodeURIComponent(dn)).catch(() => []),
           fuelProvided   ? Promise.resolve(fuelEntries)
                          : api('/api/fuel/' + encodeURIComponent(dn)).catch(() => []),
           escrowProvided ? Promise.resolve(escrowTotal)
                          : api('/api/escrow-payments/' + encodeURIComponent(dn)).catch(() => []),
+          api('/api/maintenance/' + encodeURIComponent(dn)).catch(() => []),
         ]);
         if (!live) return;
         setAdvances(Array.isArray(adv) ? adv : []);
         setPayments(Array.isArray(pay) ? pay : []);
         setFuel(Array.isArray(fu) ? fu : []);
+        setMaint(Array.isArray(mn) ? mn : []);
         if (escrowProvided) {
           setEscrow(parseFloat(escrowTotal) || 0);
         } else {
@@ -97,10 +102,11 @@ export default function DriverQuickRef({
     return () => { live = false; };
   }, [dn]);
 
-  const loading = advances === null || payments === null || fuel === null || escrow === null;
+  const loading = advances === null || payments === null || fuel === null || escrow === null || maint === null;
 
   // --- MATH (net flows from computeRunningBalance; channels are its own fields) --
-  let earned = 0, provided = 0, net = 0;
+  let earned = 0, provided = 0, settlementNet = 0;
+  let repairFinanced = 0, fundPosition = 0, combinedNet = 0;
   let ch = { ach: 0, comdata: 0, escrow: 0, fuel: 0, carrierAdv: 0, cashCheck: 0 };
 
   if (!loading) {
@@ -131,15 +137,41 @@ export default function DriverQuickRef({
     };
     provided = ch.ach + ch.comdata + ch.escrow + ch.fuel + ch.carrierAdv + ch.cashCheck;
 
-    // NET — the SAME raw balance the settlement report uses (may go negative:
-    // negative means the driver owes the carrier).
-    net = bal.stillOwedRaw;
+    // SETTLEMENT NET — the SAME raw balance the settlement report uses.
+    settlementNet = bal.stillOwedRaw;
+
+    // REPAIR FUND — mirrors Maintenance.jsx fundPosition = escrowPaidIn − financed.
+    //   financed = maintenance entries the carrier fronted (paid_by CARRIER/EDGERTON).
+    //   fundPosition > 0 → driver has a repair reserve; < 0 → driver owes the carrier.
+    // This lives in its own ledger, separate from load settlement.
+    const isFinanced = (pb) => {
+      const v = String(pb || '').toUpperCase();
+      return v === 'CARRIER' || v === 'EDGERTON';
+    };
+    repairFinanced = (Array.isArray(maint) ? maint : [])
+      .filter(e => isFinanced(e.paid_by))
+      .reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+    fundPosition = escrow - repairFinanced;   // escrow = amount paid into the repair fund
+
+    // COMBINED NET — settlement + repair fund. Adding is valid (no double-count):
+    // escrow reduces the settlement side (money provided to driver) AND offsets the
+    // repair side (money the driver paid toward repairs) — opposite directions on
+    // the same dollars, i.e. correct double-entry. Proven: settlementNet + fundPosition
+    // == (loads owed to driver ex-escrow) − (repairs financed).
+    //   combinedNet > 0 → carrier still owes the driver
+    //   combinedNet < 0 → driver owes the carrier
+    combinedNet = settlementNet + fundPosition;
   }
 
-  const netOwesCarrier = net < -0.005;   // driver owes carrier
+  const netOwesCarrier = combinedNet < -0.005;   // driver owes carrier
   const netLabel = netOwesCarrier ? 'Driver owes carrier' : 'Still owed to driver';
-  const netTone  = netOwesCarrier ? 'debt' : (net > 0.005 ? 'owed' : 'neutral');
-  const netValue = money(Math.abs(net));
+  const netTone  = netOwesCarrier ? 'debt' : (combinedNet > 0.005 ? 'owed' : 'neutral');
+  const netValue = money(Math.abs(combinedNet));
+
+  // Repair-fund line: positive fundPosition = reserve (driver ahead); negative = owed.
+  const repairOwed = fundPosition < -0.005;
+  const repairLabel = repairOwed ? 'Repair fund (driver owes)' : 'Repair fund reserve';
+  const repairTone  = repairOwed ? 'debt' : (fundPosition > 0.005 ? 'paid' : 'neutral');
 
   const S = styles;
 
@@ -178,10 +210,27 @@ export default function DriverQuickRef({
 
             <div style={S.divider} />
 
-            {/* NET */}
+            {/* TWO LEDGERS rolled into the combined net below */}
+            <div style={S.sectionLabel}>BALANCES</div>
+            <Row
+              label="Settlement balance"
+              value={money(Math.abs(settlementNet))}
+              tone={settlementNet < -0.005 ? 'debt' : (settlementNet > 0.005 ? 'owed' : 'neutral')}
+              small
+            />
+            <Row
+              label={repairLabel}
+              value={money(Math.abs(fundPosition))}
+              tone={repairTone}
+              small
+            />
+
+            <div style={S.divider} />
+
+            {/* COMBINED NET */}
             <Row label={netLabel} value={netValue} tone={netTone} big />
             <div style={S.footnote}>
-              Spot-check only. “Provided” is money already moved to the driver — every channel, not just settlement.
+              Combined net of load settlement and the repair fund. Positive = carrier owes the driver; when it reads “owes carrier,” the driver is behind.
             </div>
           </>
         )}
