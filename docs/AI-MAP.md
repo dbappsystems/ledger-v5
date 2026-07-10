@@ -77,8 +77,9 @@ Everything below requires tenant (`requireTenant`).
 
 Sub-handlers returning early (own their paths): `worker/ratecons.js` (rate cons),
 `worker/payments.js` (settlement-payment FIFO), `worker/signed.js` (signed mint).
-Other worker modules: `gl.js` (chart of accounts), `ifta.js` + `ifta_manual.js` +
-`ifta-manual.js`, `states.js` (state geometry).
+Other worker modules: `gl.js` (chart of accounts), `ifta.js` (routed IFTA
+estimate) + `ifta_manual.js` (driver odometer-chain fact side), `states.js`
+(state geometry).
 
 ---
 
