@@ -41,28 +41,48 @@ const money = (n) =>
 export default function DriverQuickRef({
   driver,                 // 'TIM' (uppercase, as stored on loads)
   loads = [],             // already-loaded loads array (parent supplies)
-  fuelEntries = [],       // already-loaded fuel entries (parent supplies)
-  escrowTotal = 0,        // driver's escrow total (parent supplies)
+  fuelEntries,            // OPTIONAL: parent's fuel rows; if omitted, card fetches
+  escrowTotal,            // OPTIONAL: driver's escrow total; if omitted, card fetches
   ownerCutPct,            // tenant carrier rate (fraction), passed explicitly
   onClose,                // () => void
 }) {
   const [advances, setAdvances] = useState(null);   // carrier_advances rows
   const [payments, setPayments] = useState(null);   // settlement_payments rows
+  const [fuel,     setFuel]     = useState(null);   // fuel_entries rows
+  const [escrow,   setEscrow]   = useState(null);   // escrow total (number)
   const [err, setErr] = useState('');
 
   const dn = String(driver || '').toUpperCase();
+
+  // Fuel + escrow: use the parent's copies when supplied, else fetch them here.
+  // Owner/bookkeeper can read any driver's fuel and escrow (worker-verified), so
+  // the card is fully self-contained and the mount site needs no new state.
+  const fuelProvided   = Array.isArray(fuelEntries);
+  const escrowProvided = escrowTotal !== undefined && escrowTotal !== null;
 
   useEffect(() => {
     let live = true;
     (async () => {
       try {
-        const [adv, pay] = await Promise.all([
+        const [adv, pay, fu, esc] = await Promise.all([
           api('/api/carrier-advances/' + encodeURIComponent(dn)).catch(() => []),
           api('/api/settlement-payments/' + encodeURIComponent(dn)).catch(() => []),
+          fuelProvided   ? Promise.resolve(fuelEntries)
+                         : api('/api/fuel/' + encodeURIComponent(dn)).catch(() => []),
+          escrowProvided ? Promise.resolve(escrowTotal)
+                         : api('/api/escrow-payments/' + encodeURIComponent(dn)).catch(() => []),
         ]);
         if (!live) return;
         setAdvances(Array.isArray(adv) ? adv : []);
         setPayments(Array.isArray(pay) ? pay : []);
+        setFuel(Array.isArray(fu) ? fu : []);
+        // escrow may arrive as the parent's number OR as fetched rows to sum.
+        if (escrowProvided) {
+          setEscrow(parseFloat(escrowTotal) || 0);
+        } else {
+          const rows = Array.isArray(esc) ? esc : [];
+          setEscrow(rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0));
+        }
       } catch (e) {
         if (live) setErr('Could not load quick reference.');
       }
@@ -70,7 +90,7 @@ export default function DriverQuickRef({
     return () => { live = false; };
   }, [dn]);
 
-  const loading = advances === null || payments === null;
+  const loading = advances === null || payments === null || fuel === null || escrow === null;
 
   // --- MATH (all figures flow from computeRunningBalance) --------------------
   let earned = 0, paidSettlement = 0, stillOwed = 0;
@@ -82,8 +102,8 @@ export default function DriverQuickRef({
 
     const bal = computeRunningBalance({
       loads,
-      fuelEntries,
-      escrowTotal,
+      fuelEntries: fuel,
+      escrowTotal: escrow,
       driver: dn,
       ownerCutPct,                 // explicit — never rely on the default
       carrierAdvances: advances,
