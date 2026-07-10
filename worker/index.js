@@ -4,8 +4,8 @@
 // OCR model: claude-sonnet-4-6 — matches the proven-working V4 worker. Do not
 // change to a dated 4.5 snapshot; V4 confirms 4-6 is valid on this API key.
 
-import { handleRouteIfta, handleIftaSummary } from './ifta.js';
-import { handleIftaManual } from './ifta_manual.js';
+import { handleRouteIfta, handleIftaSummary, routeTruck, milesByStateOrdered, buildEstimatedChain } from './ifta.js';
+import { handleIftaManual, handleRoundOpen, handleRoundClose, handleRoundFinalize } from './ifta_manual.js';
 import { handleRatecons } from './ratecons.js';
 import { handleSettlementPayments } from './payments.js';
 import { handleSignedMint, handleSignedServe } from './signed.js';
@@ -1857,7 +1857,9 @@ export default {
     if (path.startsWith('/api/loads/') && path.endsWith('/route-ifta') && request.method === 'POST') {
       try {
         const loadId = path.slice('/api/loads/'.length, -('/route-ifta'.length));
-        const out = await handleRouteIfta(env, T, loadId);
+        let rifOpts = {};
+        try { rifOpts = await request.json(); } catch (_) { rifOpts = {}; }
+        const out = await handleRouteIfta(env, T, loadId, rifOpts || {});
         return json(out.body, out.status);
       } catch(e) { return safeError(e); }
     }
@@ -1874,7 +1876,30 @@ export default {
         return json(out.body, out.status);
       } catch(e) { return safeError(e); }
     }
-
+// ── IFTA ROUND LIFECYCLE (home-anchored odometer estimate) ───────────
+    // open: driver enters home-departure odometer (FACT) → opens a round.
+    // close: "going home" → routes last drop→home, appends estimated leg.
+    // finalize: driver enters home-arrival odometer (FACT) → reconciles + closes.
+    // Placed BEFORE the generic GET /api/ifta/:driver so 'round' is never
+    // mistaken for a driver name.
+    if (path === '/api/ifta/round/open' && request.method === 'POST') {
+      try {
+        const out = await handleRoundOpen(env, T, ctx, request);
+        return json(out.body, out.status);
+      } catch(e) { return safeError(e); }
+    }
+    if (path === '/api/ifta/round/close' && request.method === 'POST') {
+      try {
+        const out = await handleRoundClose(env, T, ctx, request, { routeTruck, milesByStateOrdered, buildEstimatedChain });
+        return json(out.body, out.status);
+      } catch(e) { return safeError(e); }
+    }
+    if (path === '/api/ifta/round/finalize' && request.method === 'POST') {
+      try {
+        const out = await handleRoundFinalize(env, T, ctx, request);
+        return json(out.body, out.status);
+      } catch(e) { return safeError(e); }
+    }
     if (path.startsWith('/api/ifta/') && request.method === 'GET') {
       try {
         const driver = path.split('/')[3];
