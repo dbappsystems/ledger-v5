@@ -499,6 +499,9 @@ export default function App() {
             <button onClick={handleLogin} disabled={loginLoading} style={{ width:'100%', padding:'16px 0', borderRadius:10, border:'none', background: loginLoading ? '#555' : 'var(--amber)', color: loginLoading ? '#aaa' : '#0A1628', fontSize:16, fontFamily:'var(--font-head)', fontWeight:900, cursor: loginLoading ? 'default' : 'pointer', letterSpacing:'0.05em' }}>
               {loginLoading ? 'SIGNING IN...' : 'SIGN IN'}
             </button>
+            <div style={{ textAlign:'center', marginTop:16 }}>
+              <a href="/forgot/" style={{ color:'var(--grey)', fontFamily:'var(--font-head)', fontWeight:700, fontSize:12, letterSpacing:'0.06em', textDecoration:'none' }}>FORGOT PASSWORD?</a>
+            </div>
           </div>
           <div style={{ textAlign:'center', fontSize:10, color:'var(--grey)', marginTop:20 }}>dbappsystems.com</div>
         </div>
