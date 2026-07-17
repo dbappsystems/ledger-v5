@@ -19,7 +19,7 @@
 
 CREATE TABLE IF NOT EXISTS password_resets (
   id         TEXT PRIMARY KEY,
-  user_id    TEXT NOT NULL,
+  user_id    INTEGER NOT NULL,        -- matches users.id (INTEGER); keeps JOINs/lookups type-consistent
   tenant_id  TEXT NOT NULL,
   token_hash TEXT NOT NULL,            -- SHA-256 of the raw token (never the raw token)
   expires_at TEXT NOT NULL,            -- ISO; 60-minute TTL set by the worker
