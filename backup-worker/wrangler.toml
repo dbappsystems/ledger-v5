@@ -1,0 +1,38 @@
+# backup-worker/wrangler.toml
+# (c) dbappsystems.com
+# Load Ledger V5 — standalone scheduled D1 -> R2 backup Worker.
+#
+# This is a SEPARATE Worker from the production API (worker/). It reads the live
+# D1 database read-only and writes SQL dumps to a dedicated backup R2 bucket.
+# Deploying it CANNOT affect the live API — it shares no code and no routes.
+#
+# SECRETS (set once, never committed):
+#   wrangler secret put BACKUP_TRIGGER_TOKEN   # optional: enables /run + /status
+#
+# See backup-worker/README.md for full setup + restore instructions.
+
+name = "ledger-v5-backup"
+main = "index.js"
+compatibility_date = "2026-06-01"
+
+# Daily at 08:00 UTC. Adjust as desired (https://crontab.guru).
+[triggers]
+crons = ["0 8 * * *"]
+
+# The PRODUCTION database — read-only from this Worker.
+[[d1_databases]]
+binding = "DB"
+database_name = "load-ledger-v5-db"
+database_id = "22bda25f-1827-49fb-84bf-5108b6dac114"
+
+# The dedicated backup bucket. Create it first:
+#   wrangler r2 bucket create load-ledger-v5-backups
+[[r2_buckets]]
+binding = "BACKUP_R2"
+bucket_name = "load-ledger-v5-backups"
+
+[vars]
+# Friendly name used in the dump header + R2 key path.
+DB_NAME = "load-ledger-v5-db"
+# Backups older than this many days are pruned from the bucket each run.
+RETENTION_DAYS = "90"
