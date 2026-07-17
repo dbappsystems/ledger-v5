@@ -332,8 +332,7 @@ async function geocodeAddress({ address, city, state, zip }) {
   }
 }
 
-export default {
-  async fetch(request, env) {
+async function handleRequest(request, env) {
     const url  = new URL(request.url);
     const path = url.pathname;
 
@@ -1937,6 +1936,27 @@ export default {
     }
 
     return json({ message: 'Load Ledger V5 API — dbappsystems.com' });
+}
+
+export default {
+  // Single CORS choke point: reflect an allow-listed Origin onto EVERY response,
+  // not just the OPTIONS preflight. Individual handlers still emit the static
+  // production-origin header (via json()/CORS); this overrides it per request so
+  // loadledgers.com AND *.pages.dev preview builds can both read API responses.
+  // A non-allow-listed or Origin-less caller is left untouched, so the CORS wall
+  // is unchanged for everyone else.
+  async fetch(request, env) {
+    const res = await handleRequest(request, env);
+    try {
+      const origin = request.headers.get('Origin');
+      if (origin && isAllowedOrigin(origin)) {
+        const out = new Response(res.body, res);
+        out.headers.set('Access-Control-Allow-Origin', origin);
+        out.headers.set('Vary', 'Origin');
+        return out;
+      }
+    } catch (_) { /* fall through to the original response */ }
+    return res;
   },
 };
 
