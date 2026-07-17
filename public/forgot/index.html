@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Reset your password — loadledgers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;900&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#0A1628; --navy2:#0f2238; --navy3:#16304d;
+    --amber:#ffb300; --white:#f5f7fa; --grey:#8aa0b8;
+    --border:#1e3a5c; --green:#43a047; --red:#e53935;
+    --font-head:'Barlow Condensed',system-ui,sans-serif;
+    --font-body:'Barlow',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--navy);color:var(--white);font-family:var(--font-body);-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:420px;margin:0 auto;padding:32px 18px 56px;}
+  .brand{display:flex;align-items:baseline;gap:6px;justify-content:center;margin:8px 0 4px;}
+  .brand .logo{font-family:var(--font-head);font-weight:900;font-size:30px;letter-spacing:.02em;color:var(--amber);line-height:1;}
+  .brand .v5{font-family:var(--font-head);font-weight:700;font-size:12px;color:var(--grey);letter-spacing:.04em;}
+  h1{font-family:var(--font-head);font-weight:900;font-size:22px;letter-spacing:.04em;text-align:center;margin:18px 0 6px;}
+  .sub{text-align:center;color:var(--grey);font-size:14px;line-height:1.5;margin:0 auto 18px;}
+  .card{background:var(--navy2);border:1px solid var(--border);border-radius:14px;padding:20px;}
+  label{display:block;font-family:var(--font-head);font-weight:700;font-size:12px;letter-spacing:.06em;color:var(--grey);margin:4px 0 6px;text-transform:uppercase;}
+  input{width:100%;background:var(--navy3);border:1px solid var(--border);color:var(--white);border-radius:8px;padding:12px 14px;font-size:16px;font-family:var(--font-body);outline:none;}
+  input:focus{border-color:var(--amber);}
+  input::placeholder{color:var(--grey);}
+  .send{width:100%;margin-top:20px;padding:16px 0;border:none;border-radius:10px;background:var(--amber);color:var(--navy);font-family:var(--font-head);font-weight:900;font-size:16px;letter-spacing:.05em;cursor:pointer;}
+  .send:disabled{background:#555;color:#aaa;cursor:default;}
+  .err{color:var(--red);font-family:var(--font-head);font-weight:700;font-size:13px;margin-top:12px;text-align:center;}
+  .back{text-align:center;margin-top:16px;}
+  .back a{color:var(--amber);text-decoration:none;font-family:var(--font-head);font-weight:700;font-size:13px;}
+  .foot{text-align:center;font-size:10px;color:var(--grey);margin-top:24px;}
+  .done{text-align:center;padding:24px 6px;}
+  .done .check{font-size:44px;margin-bottom:10px;}
+  .done h2{font-family:var(--font-head);font-weight:900;font-size:20px;margin:0 0 8px;}
+  .done p{color:var(--grey);font-size:14px;line-height:1.55;margin:0;}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand"><span class="logo">loadledgers</span><span class="v5">v5</span></div>
+    <h1>RESET YOUR PASSWORD</h1>
+    <p class="sub">Enter the email on your account and we'll send you a link to set a new password.</p>
+
+    <div class="card" id="card">
+      <label>Email</label>
+      <input id="email" type="email" inputmode="email" autocapitalize="none" autocorrect="off" placeholder="you@email.com" autocomplete="email" />
+      <button class="send" id="send" onclick="submitForgot()">SEND RESET LINK</button>
+      <div class="err" id="err" style="display:none;"></div>
+      <div class="back"><a href="/">&larr; Back to sign in</a></div>
+    </div>
+
+    <div class="foot">dbappsystems.com</div>
+  </div>
+
+<script>
+  var API = 'https://ledger-v5.d49rwgmpj9.workers.dev';
+
+  function submitForgot(){
+    var btn = document.getElementById('send');
+    var err = document.getElementById('err');
+    err.style.display = 'none';
+    var email = document.getElementById('email').value.trim();
+    if(!email){ showErr('Please enter your email.'); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'SENDING...';
+
+    fetch(API + '/api/auth/forgot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email })
+    })
+    .then(function(r){ return r.json().catch(function(){ return {}; }); })
+    .then(function(){ showDone(); })   // enumeration-safe: always show the same result
+    .catch(function(){
+      showErr('Connection error. Please try again.');
+      btn.disabled = false;
+      btn.textContent = 'SEND RESET LINK';
+    });
+  }
+
+  function showErr(msg){
+    var err = document.getElementById('err');
+    err.textContent = msg;
+    err.style.display = 'block';
+  }
+
+  function showDone(){
+    document.getElementById('card').innerHTML =
+      '<div class="done">' +
+        '<div class="check">\u2709\uFE0F</div>' +
+        '<h2>CHECK YOUR EMAIL</h2>' +
+        '<p>If an account exists for that email, a password reset link is on its way. ' +
+        'The link expires in 60 minutes and can be used once.</p>' +
+        '<div class="back" style="margin-top:18px"><a href="/">&larr; Back to sign in</a></div>' +
+      '</div>';
+  }
+</script>
+</body>
+</html>

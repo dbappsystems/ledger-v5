@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Set a new password — loadledgers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;900&family=Barlow:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --navy:#0A1628; --navy2:#0f2238; --navy3:#16304d;
+    --amber:#ffb300; --white:#f5f7fa; --grey:#8aa0b8;
+    --border:#1e3a5c; --green:#43a047; --red:#e53935;
+    --font-head:'Barlow Condensed',system-ui,sans-serif;
+    --font-body:'Barlow',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--navy);color:var(--white);font-family:var(--font-body);-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:420px;margin:0 auto;padding:32px 18px 56px;}
+  .brand{display:flex;align-items:baseline;gap:6px;justify-content:center;margin:8px 0 4px;}
+  .brand .logo{font-family:var(--font-head);font-weight:900;font-size:30px;letter-spacing:.02em;color:var(--amber);line-height:1;}
+  .brand .v5{font-family:var(--font-head);font-weight:700;font-size:12px;color:var(--grey);letter-spacing:.04em;}
+  h1{font-family:var(--font-head);font-weight:900;font-size:22px;letter-spacing:.04em;text-align:center;margin:18px 0 6px;}
+  .sub{text-align:center;color:var(--grey);font-size:14px;line-height:1.5;margin:0 auto 18px;}
+  .card{background:var(--navy2);border:1px solid var(--border);border-radius:14px;padding:20px;}
+  label{display:block;font-family:var(--font-head);font-weight:700;font-size:12px;letter-spacing:.06em;color:var(--grey);margin:14px 0 6px;text-transform:uppercase;}
+  input{width:100%;background:var(--navy3);border:1px solid var(--border);color:var(--white);border-radius:8px;padding:12px 14px;font-size:16px;font-family:var(--font-body);outline:none;}
+  input:focus{border-color:var(--amber);}
+  input::placeholder{color:var(--grey);}
+  .hint{font-size:12px;color:var(--grey);margin-top:6px;}
+  .send{width:100%;margin-top:20px;padding:16px 0;border:none;border-radius:10px;background:var(--amber);color:var(--navy);font-family:var(--font-head);font-weight:900;font-size:16px;letter-spacing:.05em;cursor:pointer;}
+  .send:disabled{background:#555;color:#aaa;cursor:default;}
+  .err{color:var(--red);font-family:var(--font-head);font-weight:700;font-size:13px;margin-top:12px;text-align:center;}
+  .back{text-align:center;margin-top:16px;}
+  .back a{color:var(--amber);text-decoration:none;font-family:var(--font-head);font-weight:700;font-size:13px;}
+  .foot{text-align:center;font-size:10px;color:var(--grey);margin-top:24px;}
+  .done{text-align:center;padding:24px 6px;}
+  .done .check{font-size:44px;margin-bottom:10px;}
+  .done h2{font-family:var(--font-head);font-weight:900;font-size:20px;margin:0 0 8px;}
+  .done p{color:var(--grey);font-size:14px;line-height:1.55;margin:0 0 16px;}
+  .signin{display:inline-block;padding:12px 22px;border-radius:10px;background:var(--amber);color:var(--navy);font-family:var(--font-head);font-weight:900;font-size:15px;letter-spacing:.05em;text-decoration:none;}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand"><span class="logo">loadledgers</span><span class="v5">v5</span></div>
+    <h1>SET A NEW PASSWORD</h1>
+    <p class="sub">Choose a new password for your account.</p>
+
+    <div class="card" id="card">
+      <label>New password</label>
+      <input id="pw1" type="password" placeholder="At least 8 characters" autocomplete="new-password" />
+      <label>Confirm new password</label>
+      <input id="pw2" type="password" placeholder="Re-enter your password" autocomplete="new-password" />
+      <div class="hint">Use at least 8 characters.</div>
+      <button class="send" id="send" onclick="submitReset()">SET NEW PASSWORD</button>
+      <div class="err" id="err" style="display:none;"></div>
+      <div class="back"><a href="/">&larr; Back to sign in</a></div>
+    </div>
+
+    <div class="foot">dbappsystems.com</div>
+  </div>
+
+<script>
+  var API = 'https://ledger-v5.d49rwgmpj9.workers.dev';
+
+  function getToken(){
+    var m = new URLSearchParams(window.location.search).get('token');
+    return (m || '').trim();
+  }
+
+  // No token in the link -> nothing to do; guide the user back to request one.
+  if(!getToken()){
+    document.getElementById('card').innerHTML =
+      '<div class="done">' +
+        '<div class="check">\u26A0\uFE0F</div>' +
+        '<h2>LINK INCOMPLETE</h2>' +
+        '<p>This reset link is missing its token. Please request a new one.</p>' +
+        '<a class="signin" href="/forgot/">Request a new link</a>' +
+      '</div>';
+  }
+
+  function submitReset(){
+    var btn = document.getElementById('send');
+    var err = document.getElementById('err');
+    err.style.display = 'none';
+    var pw1 = document.getElementById('pw1').value;
+    var pw2 = document.getElementById('pw2').value;
+    if(pw1.length < 8){ showErr('Password must be at least 8 characters.'); return; }
+    if(pw1 !== pw2){ showErr('Passwords do not match.'); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'SAVING...';
+
+    fetch(API + '/api/auth/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: getToken(), password: pw1 })
+    })
+    .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ return { ok: r.ok, d: d }; }); })
+    .then(function(res){
+      if(res.ok && res.d && res.d.ok){
+        showDone();
+      } else {
+        showErr((res.d && res.d.error) ? res.d.error : 'Could not reset your password. Please request a new link.');
+        btn.disabled = false;
+        btn.textContent = 'SET NEW PASSWORD';
+      }
+    })
+    .catch(function(){
+      showErr('Connection error. Please try again.');
+      btn.disabled = false;
+      btn.textContent = 'SET NEW PASSWORD';
+    });
+  }
+
+  function showErr(msg){
+    var err = document.getElementById('err');
+    err.textContent = msg;
+    err.style.display = 'block';
+  }
+
+  function showDone(){
+    document.getElementById('card').innerHTML =
+      '<div class="done">' +
+        '<div class="check">\u2705</div>' +
+        '<h2>PASSWORD UPDATED</h2>' +
+        '<p>Your password has been reset. You can now sign in with your new password.</p>' +
+        '<a class="signin" href="/">Sign in</a>' +
+      '</div>';
+  }
+</script>
+</body>
+</html>
