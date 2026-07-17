@@ -161,7 +161,7 @@ async function sendResetEmail(env, toEmail, resetUrl) {
   // API host differs by ZeptoMail data center; override with ZEPTOMAIL_API_URL
   // if your account is not on the default (.com) DC.
   const apiUrl = env.ZEPTOMAIL_API_URL || 'https://api.zeptomail.com/v1.1/email';
-  const from = env.RESET_FROM_EMAIL || 'no-reply@loadledgers.com';
+  const from = env.RESET_FROM_EMAIL || 'noreply@loadledgers.com';
   const html =
     '<div style="font-family:Arial,sans-serif;font-size:15px;color:#0A1628;line-height:1.6">' +
     '<p>We received a request to reset your Load Ledgers password.</p>' +
