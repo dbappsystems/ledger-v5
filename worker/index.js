@@ -134,6 +134,68 @@ function randomHex(bytes) {
   return [...a].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// ── PASSWORD RESET support ───────────────────────────────────────────────────
+// Self-serve reset (POST /api/auth/forgot + /api/auth/reset). Tokens are
+// single-use, short-lived, and stored ONLY as a SHA-256 hash — the raw token
+// lives only in the emailed link. See migrations/0011_password_resets.sql.
+const PW_RESET_TTL_MIN = 60; // reset link validity window (minutes)
+
+async function sha256Hex(str) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Send the reset link via ZeptoMail. Returns true on a sent email, false
+// otherwise. DELIBERATELY non-fatal and quiet: if ZEPTOMAIL_TOKEN is not yet
+// configured (domain still verifying) it logs the link and returns false so the
+// flow stays testable, and /api/auth/forgot always returns the SAME generic
+// response regardless — the email outcome is never leaked to the caller.
+async function sendResetEmail(env, toEmail, resetUrl) {
+  const raw = env.ZEPTOMAIL_TOKEN;
+  if (!raw) {
+    console.log('[password-reset] ZEPTOMAIL_TOKEN not set; reset link (not emailed):', resetUrl);
+    return false;
+  }
+  // The dashboard sometimes includes the scheme prefix in the copied token.
+  const authValue = raw.startsWith('Zoho-enczapikey') ? raw : ('Zoho-enczapikey ' + raw);
+  // API host differs by ZeptoMail data center; override with ZEPTOMAIL_API_URL
+  // if your account is not on the default (.com) DC.
+  const apiUrl = env.ZEPTOMAIL_API_URL || 'https://api.zeptomail.com/v1.1/email';
+  const from = env.RESET_FROM_EMAIL || 'no-reply@loadledgers.com';
+  const html =
+    '<div style="font-family:Arial,sans-serif;font-size:15px;color:#0A1628;line-height:1.6">' +
+    '<p>We received a request to reset your Load Ledgers password.</p>' +
+    '<p><a href="' + resetUrl + '" style="background:#ffb300;color:#0A1628;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold">Reset your password</a></p>' +
+    '<p>Or paste this link into your browser:<br><span style="color:#555">' + resetUrl + '</span></p>' +
+    '<p style="color:#888;font-size:13px">This link expires in ' + PW_RESET_TTL_MIN + ' minutes and can be used once. ' +
+    'If you didn\u2019t request this, you can safely ignore this email \u2014 your password will not change.</p>' +
+    '</div>';
+  try {
+    const res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': authValue,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        from: { address: from, name: 'Load Ledgers' },
+        to: [{ email_address: { address: toEmail } }],
+        subject: 'Reset your Load Ledgers password',
+        htmlbody: html,
+      }),
+    });
+    if (!res.ok) {
+      console.log('[password-reset] ZeptoMail send failed:', res.status);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.log('[password-reset] ZeptoMail send threw:', e && e.message);
+    return false;
+  }
+}
+
 // ── LOGIN RATE LIMITING (fail-open, per IP+email) ────────────────────────────
 // Brute-force / credential-stuffing defense at the application layer. The API
 // lives on *.workers.dev (not a zone we can attach edge WAF rules to), so the
@@ -444,6 +506,71 @@ export default {
         ).run();
         return json({ ok: true, id });
       } catch(e) { return safeError(e); }
+    }
+
+    // ── PASSWORD RESET (public, pre-tenant) ──────────────────────────────────
+    // Step 1: request a link. ENUMERATION-SAFE — returns the identical response
+    // whether or not the email has an account, so it can't reveal who is a user.
+    if (path === '/api/auth/forgot' && request.method === 'POST') {
+      const generic = json({ ok: true, message: 'If an account exists for that email, a reset link is on its way.' });
+      try {
+        const { email } = await request.json();
+        const clean = String(email || '').trim();
+        if (!clean) return generic;
+        const user = await env.DB.prepare(
+          'SELECT id, tenant_id, email FROM users WHERE LOWER(email) = LOWER(?)'
+        ).bind(clean).first();
+        if (user && user.tenant_id) {
+          // One live token per user: retire any prior unused ones (tenant-scoped).
+          await env.DB.prepare(
+            'UPDATE password_resets SET used = 1 WHERE user_id = ? AND tenant_id = ? AND used = 0'
+          ).bind(user.id, user.tenant_id).run();
+          const rawToken = randomHex(32);
+          const tokenHash = await sha256Hex(rawToken);
+          const id = crypto.randomUUID();
+          const expires = new Date(Date.now() + PW_RESET_TTL_MIN * 60000).toISOString();
+          await env.DB.prepare(
+            "INSERT INTO password_resets (id, user_id, tenant_id, token_hash, expires_at, used, created_at) VALUES (?,?,?,?,?,0,datetime('now'))"
+          ).bind(id, user.id, user.tenant_id, tokenHash, expires).run();
+          const base = (env.APP_BASE_URL || 'https://loadledgers.com').replace(/\/+$/, '');
+          const resetUrl = base + '/reset/?token=' + rawToken;
+          await sendResetEmail(env, user.email, resetUrl);
+        }
+        return generic;
+      } catch (e) {
+        // Never leak — even on unexpected error, return the same generic message.
+        return generic;
+      }
+    }
+
+    // Step 2: consume the link. Validates the single-use, unexpired token, writes
+    // a fresh 100k-PBKDF2 hash, and drops ALL of that user's sessions.
+    if (path === '/api/auth/reset' && request.method === 'POST') {
+      try {
+        const { token, password } = await request.json();
+        const rawToken = String(token || '').trim();
+        const pw = String(password || '');
+        if (!rawToken || !pw) return json({ error: 'Missing token or password' }, 400);
+        if (pw.length < 8) return json({ error: 'Password must be at least 8 characters.' }, 400);
+        const tokenHash = await sha256Hex(rawToken);
+        // Pre-tenant lookup by opaque single-use token hash (like a session token).
+        const row = await env.DB.prepare(
+          'SELECT id, user_id, tenant_id, expires_at, used FROM password_resets WHERE token_hash = ?'
+        ).bind(tokenHash).first();
+        if (!row || row.used) return json({ error: 'This reset link is invalid or has already been used.' }, 400);
+        if (new Date(row.expires_at) < new Date()) return json({ error: 'This reset link has expired. Please request a new one.' }, 400);
+        const salt = randomHex(16);
+        const hash = await makePasswordHash(pw, salt);
+        await env.DB.prepare('UPDATE users SET password = ?, salt = ? WHERE id = ? AND tenant_id = ?')
+          .bind(hash, salt, row.user_id, row.tenant_id).run();
+        await env.DB.prepare('UPDATE password_resets SET used = 1 WHERE id = ? AND tenant_id = ?')
+          .bind(row.id, row.tenant_id).run();
+        // A password change invalidates every existing session for that user.
+        await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(row.user_id).run();
+        return json({ ok: true, message: 'Your password has been reset. You can now sign in.' });
+      } catch (e) {
+        return safeError(e);
+      }
     }
 
     let ctx;
