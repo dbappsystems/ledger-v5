@@ -144,10 +144,12 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
 
   async function fetchDriverSettlementOwed() {
     try {
-      const [allLoads, fuelData, escrowData] = await Promise.all([
+      const [allLoads, fuelData, escrowData, advData, payData] = await Promise.all([
         apiClient('/api/loads').catch(() => []),
         apiClient('/api/fuel/' + driver).catch(() => []),
         apiClient('/api/escrow-payments/' + driver).catch(() => []),
+        apiClient('/api/carrier-advances/' + driver).catch(() => []),
+        apiClient('/api/settlement-payments/' + driver).catch(() => []),
       ])
       // Booked-not-yet-billed loads are excluded: earnings don't exist until
       // the load is invoiced, so they must not inflate the running balance.
@@ -161,9 +163,26 @@ export default function Maintenance({ driver, showToast, onEntriesChange, role, 
       setEscrowPayments(payments)
       setEscrowPaymentsTotal(escrowTotal)
 
+      // CARRIER ADVANCES + CASH/CHECK PAYMENTS — these MUST be passed. Both
+      // default to zero inside computeRunningBalance, so omitting them silently
+      // OVERSTATES the balance owed to the driver by every dollar already handed
+      // over. That defect made this panel read $6764.27 while the Settlement
+      // Report read $4264.27 — a $2500.00 gap exactly equal to the driver's
+      // settlement_payments (cash/check) total. Mirrors the call in
+      // SettlementReport.jsx runningBalance(). Do not drop these arguments again.
+      const carrierAdvances = (Array.isArray(advData) ? advData : [])
+        .filter(a => (a.driver || '').toUpperCase() === (driver || '').toUpperCase())
+      const settlementPaymentsTotal = (Array.isArray(payData) ? payData : [])
+        .filter(p => (p.driver || '').toUpperCase() === (driver || '').toUpperCase())
+        .reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)
+
       // ONE formula — src/settlementMath.js. Same number as the Settlement
       // Report, always. Per-tenant split via ownerCutPct.
-      const rb = computeRunningBalance({ loads, fuelEntries, escrowTotal, driver, ownerCutPct })
+      const rb = computeRunningBalance({
+        loads, fuelEntries, escrowTotal, driver, ownerCutPct,
+        carrierAdvances,
+        settlementPaymentsTotal,
+      })
       setDriverSettlementOwed(rb.stillOwed)
     } catch (err) {
       console.error('Settlement fetch failed:', err)
